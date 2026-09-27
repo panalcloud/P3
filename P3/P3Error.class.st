@@ -41,6 +41,18 @@ P3Error class >> closeCompleteExpected [
 ]
 
 { #category : 'instance creation' }
+P3Error class >> commitReportedAs: resultTag [
+	"COMMIT on a transaction already in the failed ($E) state does not commit: PostgreSQL
+	quietly runs a ROLLBACK instead and reports that as the command tag, with no error of its
+	own. P3DatabaseDriver>>commitTransaction checks the tag it gets back so a caller that
+	swallowed an earlier error is not told its unit of work was saved when it was not."
+
+	^ self new
+		info: { $C->'P3051'. $M->('COMMIT was not honored, the server reports {1}' format: { resultTag }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
 P3Error class >> connectionLostInTransaction [
 	"See P3Client>>#closeAfterFailure: reconnecting would continue in autocommit what the caller
 	still believes is one transaction."

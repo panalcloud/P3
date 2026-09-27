@@ -999,7 +999,7 @@ P3Client >> processRowDescription: payload [
 					attributeNumber: payload uint16;
 					typeOid: payload uint32;
 					typeSize: payload uint16;
-					typeModifier: payload uint32;
+					typeModifier: payload int32;
 					format: payload uint16;
 					yourself) ] ]
 ]

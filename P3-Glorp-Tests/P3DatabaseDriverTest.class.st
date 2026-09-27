@@ -1,7 +1,7 @@
 "
 I test P3DatabaseDriver's transaction protocol directly against a P3Client connection, without a Glorp session.
 
-I cover G7: once a transaction is in the failed ($E) state, COMMIT does not commit. PostgreSQL quietly runs a ROLLBACK instead and reports that as the command tag, with no error of its own. #commitTransaction must not let that pass as success.
+Once a transaction is in the failed ($E) state, COMMIT does not commit: PostgreSQL quietly runs a ROLLBACK instead and reports that as the command tag, with no error of its own. #commitTransaction must not let that pass as success.
 
 Configure the connection through P3ClientTest class >> #url:, like the other tests in P3-Tests.
 "
@@ -45,24 +45,24 @@ P3DatabaseDriverTest >> tearDown [
 
 { #category : 'tests' }
 P3DatabaseDriverTest >> testCommitTransactionAfterFailureDoesNotLeaveDataCommitted [
-	"Reproduce with a real write, not just an expectation that commitTransaction raises: the
-	point of G7 is that application code swallowing the earlier error believed its write was
-	saved, while the server had already rolled it back."
+	"Reproduce with a real write, not just an expectation that commitTransaction raises: a
+	caller that swallows the earlier error and believes its write was saved must still find
+	the row gone, since the server had already rolled it back."
 
-	driver connection execute: 'CREATE TEMP TABLE p3u_g7 (i int)'.
+	driver connection execute: 'CREATE TEMP TABLE p3_commit_test (i int)'.
 	driver beginTransaction.
-	driver connection execute: 'INSERT INTO p3u_g7 VALUES (1)'.
+	driver connection execute: 'INSERT INTO p3_commit_test VALUES (1)'.
 	[ driver connection query: 'SELECT 1/0' ] on: Error do: [ :error | ].
 	[ driver commitTransaction ] on: Error do: [ :error | ].
 	self
-		assert: (driver connection query: 'SELECT count(*) FROM p3u_g7') data
+		assert: (driver connection query: 'SELECT count(*) FROM p3_commit_test') data
 		equals: #( #( 0 ) )
 ]
 
 { #category : 'tests' }
 P3DatabaseDriverTest >> testCommitTransactionAfterFailureSignals [
-	"The bug: PostgreSQL answers a COMMIT on a failed transaction with the command tag
-	'ROLLBACK' and no error of its own. commitTransaction must not let that pass silently."
+	"PostgreSQL answers a COMMIT on a failed transaction with the command tag 'ROLLBACK' and
+	no error of its own. commitTransaction must not let that pass silently."
 
 	self failTransaction.
 	self should: [ driver commitTransaction ] raise: P3Error
@@ -70,13 +70,13 @@ P3DatabaseDriverTest >> testCommitTransactionAfterFailureSignals [
 
 { #category : 'tests' }
 P3DatabaseDriverTest >> testCommitTransactionAfterSuccessStillCommits [
-	"The fix must not turn an ordinary, successful commit into an error."
+	"An ordinary, successful commit must not turn into an error."
 
-	driver connection execute: 'CREATE TEMP TABLE p3u_g7 (i int)'.
+	driver connection execute: 'CREATE TEMP TABLE p3_commit_test (i int)'.
 	driver beginTransaction.
-	driver connection execute: 'INSERT INTO p3u_g7 VALUES (1)'.
+	driver connection execute: 'INSERT INTO p3_commit_test VALUES (1)'.
 	driver commitTransaction.
 	self
-		assert: (driver connection query: 'SELECT count(*) FROM p3u_g7') data
+		assert: (driver connection query: 'SELECT count(*) FROM p3_commit_test') data
 		equals: #( #( 1 ) )
 ]

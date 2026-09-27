@@ -52,12 +52,18 @@ P3Converter class >> typeMap [
 	^ IdentityDictionary newFromPairs: #(
 			16 #(bool #convertBooleanFrom:length:description:) 
 			17 #(bytea #convertByteArrayFrom:length:description:) 
+			18 #(#'"char"' #convertCharacterFrom:length:description:)
 			19 #(name #convertStringFrom:length:description:) 
 			20 #(int8 #convertIntegerFrom:length:description:) 
 			21 #(int2 #convertIntegerFrom:length:description:) 
+			22 #(int2vector #convertIntegerVectorFrom:length:description:)
 			23 #(int4 #convertIntegerFrom:length:description:) 
+			24 #(regproc #convertStringFrom:length:description:)
 			25 #(text #convertStringFrom:length:description:) 
 			26 #(oid #convertIntegerFrom:length:description:) 
+			28 #(xid #convertIntegerFrom:length:description:)
+			29 #(cid #convertIntegerFrom:length:description:)
+			194 #(pg_node_tree #convertStringFrom:length:description:)
 			700 #(float4 #convertFloatFrom:length:description:) 
 			701 #(float8 #convertFloatFrom:length:description:) 
 			1042 #(bpchar #convertStringFrom:length:description:) 
@@ -84,6 +90,7 @@ P3Converter class >> typeMap [
 			1015 #(#'_varchar' #convertStringArrayFrom:length:description:)
 			1022 #(#'_float8' #convertFloatArrayFrom:length:description:)
 			1028 #(#'_oid' #convertIntegerArrayFrom:length:description:)
+			1034 #(#'_aclitem' #convertStringArrayFrom:length:description:)
 			"geometric"
 			600 #(point #convertPointFrom:length:description:)
 			601 #(lseg #convertLineSegmentFrom:length:description:)
@@ -180,6 +187,16 @@ P3Converter >> convertByteArrayFrom: bytes length: length description: descripti
 		value := (value bitShift: 4) + (digitValues at: bytes next + 1).
 		byteArray at: index put: value ].
 	^ byteArray 
+]
+
+{ #category : 'converting' }
+P3Converter >> convertCharacterFrom: bytes length: length description: description [
+	"""char"" (OID 18): PostgreSQL's internal single-byte type, always exactly one byte, not
+	to be confused with bpchar/varchar (which read as String) or one encoded character of
+	text."
+
+	self assert: length = 1.
+	^ Character value: bytes next
 ]
 
 { #category : 'converting-geometric' }

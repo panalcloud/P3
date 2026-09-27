@@ -90,21 +90,21 @@ P3Result >> descriptions: collectionOfRowFieldDescriptions [
 P3Result >> firstColumnData [
 	"Return a flat collection of the data in the first column that I hold"
 	
-	^ data collect: #first
+	^ self hasData ifTrue: [ data collect: #first ] ifFalse: [ #() ]
 ]
 
 { #category : 'convenience' }
 P3Result >> firstFieldOfFirstRecord [
 	"Return the value of the first field of the first record that I hold"
 	
-	^ self firstRecord first
+	^ self firstRecord ifNotNil: [ :record | record first ]
 ]
 
 { #category : 'accessing' }
 P3Result >> firstRecord [
 	"Return the first record of the result, which will be an Array"
 	
-	^ self records first
+	^ self hasData ifTrue: [ self records first ] ifFalse: [ nil ]
 ]
 
 { #category : 'accessing' }
@@ -209,12 +209,15 @@ P3Result >> recordsAsDictionaries [
 	is represented by a Dictionary whose keys are the column names.
 	This more verbose representation can be more user friendly."
 	
-	^ self records collect: [ :record |
-		| dictionary |
-		dictionary := Dictionary new.
-		self descriptions withIndexDo: [ :description :index |
-			dictionary at: description fieldName asSymbol put: (record at: index) ].
-		dictionary ]
+	^ self hasData
+		ifFalse: [ #() ]
+		ifTrue: [ 
+			self records collect: [ :record |
+				| dictionary |
+				dictionary := Dictionary new.
+				self descriptions withIndexDo: [ :description :index |
+					dictionary at: description fieldName asSymbol put: (record at: index) ].
+				dictionary ] ]
 ]
 
 { #category : 'accessing' }

@@ -197,6 +197,20 @@ P3ConversionFailureTest >> testIsWorkingAfterConversionFailure [
 ]
 
 { #category : 'tests' }
+P3ConversionFailureTest >> testResultConvenienceAccessorsAnswerWhenDataIsNil [
+	"A P3Result with nil data (no DataRow was ever read, e.g. because the query never got a
+	response) must answer, not raise: isWorking depends on firstFieldOfFirstRecord not blowing up
+	on a MessageNotUnderstood when there is nothing to read."
+
+	| result |
+	result := P3Result descriptions: nil data: nil results: 'SELECT 0'.
+	self assert: result firstRecord isNil.
+	self assert: result firstFieldOfFirstRecord isNil.
+	self assert: result firstColumnData isEmpty.
+	self assert: result recordsAsDictionaries isEmpty
+]
+
+{ #category : 'tests' }
 P3ConversionFailureTest >> testTypeModifierIsSigned [
 	"processRowDescription: reads atttypmod with uint32, so 'no modifier' (-1) arrives as
 	4294967295 and every caller has to know to normalise it."

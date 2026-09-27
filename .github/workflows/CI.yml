@@ -1,6 +1,10 @@
 name: CI
 
-on: [ push, pull_request, workflow_dispatch ]
+on:
+  push:
+    branches: [ master, local-main ]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -46,6 +50,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

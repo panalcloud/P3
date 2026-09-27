@@ -604,6 +604,20 @@ P3ClientTest >> testQueryCatalog [
 ]
 
 { #category : 'tests' }
+P3ClientTest >> testRetrySettings [
+	"#retryDelay: used to store 5 whatever it was given, so a caller could not shorten the wait
+	between reconnection attempts."
+
+	| probe |
+	probe := P3Client new.
+	self assert: probe retryCount equals: 10.
+	self assert: probe retryDelay equals: 5.
+	probe retryCount: 2; retryDelay: 2.
+	self assert: probe retryCount equals: 2.
+	self assert: probe retryDelay equals: 2
+]
+
+{ #category : 'tests' }
 P3ClientTest >> testSession [
 
 	| session |

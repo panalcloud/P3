@@ -54,8 +54,11 @@ P3PreparedStatement class >> newWith: aClient name: aString parameters: paramDes
 	^ self new initializeWith: aClient name: aString parameters: paramDescriptions fields: rowDescriptions
 ]
 
-{ #category : 'input/output' }
-P3PreparedStatement >> bindStrings: inputValues [
+{ #category : 'private' }
+P3PreparedStatement >> bindMessageFor: inputValues [
+	"The Bind message for one row of parameters, as a tag -> payload association. Building it can fail
+	on any value, which is why it is built in memory and not written to the socket. See
+	P3Client>>#writeExtendedRequest:."
 
 	| msgBuilder |
 
@@ -75,9 +78,9 @@ P3PreparedStatement >> bindStrings: inputValues [
 
 	msgBuilder nextPutInt16: 0. "All result columns use the text format"
 
-	client writeMessageNoFlush: msgBuilder asBytes tag: $B.
+	client logBinding: self inputValues: inputValues.
 	
-	client logBinding: self inputValues: inputValues
+	^ $B -> msgBuilder asBytes
 ]
 
 { #category : 'public' }
@@ -86,13 +89,8 @@ P3PreparedStatement >> close [
 
 	client ifNil: [ ^ self ].
 
-	self writeCloseMessage: name type: $S.
-	self writeFlushMessage.	
-	
-	"Check for CloseComplete message"
-	client readMessage tag = $3
-		ifFalse: [ P3Error closeCompleteExpected signal ].	
-	
+	client runCloseStatementNamed: name.
+
 	"This prepared statement can no longer be used."
 	client forgetPreparedStatementNamed: name.
 	client := nil
@@ -108,12 +106,7 @@ P3PreparedStatement >> execute: inputRow [
 	"Execute this SQL query with inputRow as the ordered collection of parameters.
 	Assume no rows will be returned."
 
-	client setSource: self source.
-	self bindStrings: inputRow.
-	self writeExecuteMessage: 0.
-	client writeSyncMessage.
-	
-	^ (client runExtendedQueryResults: fieldDescriptions) first result
+	^ (self runInputRows: { inputRow }) first result
 ]
 
 { #category : 'public' }
@@ -124,13 +117,17 @@ P3PreparedStatement >> executeBatch: inputRows [
 	inputRows isEmpty
 		ifTrue: [ ^ #() ].
 
-	client setSource: self source.
-	inputRows do: [ :eachRow |
-		self bindStrings: eachRow.
-		self writeExecuteMessage: 0 ].
-	client writeSyncMessage.
-	
-	^ (client runExtendedQueryResults: fieldDescriptions) collect: [ :each | each result ]
+	^ (self runInputRows: inputRows) collect: [ :each | each result ]
+]
+
+{ #category : 'private' }
+P3PreparedStatement >> executeMessage [
+	"The Execute message for my portal with no row limit, as a tag -> payload association."
+
+	^ $E -> (client newMessageBuilder
+		nextPutString: '';
+		nextPutInt32: 0;
+		yourself) asBytes
 ]
 
 { #category : 'accessing' }
@@ -178,12 +175,7 @@ P3PreparedStatement >> query: inputRow [
 	"Execute this SQL query with inputRow as the ordered collection of parameters.
 	Answer a P3Result object with the field descriptions and rows."
 
-	client setSource: self source.
-	self bindStrings: inputRow.
-	self writeExecuteMessage: 0.
-	client writeSyncMessage.
-	
-	^ (client runExtendedQueryResults: fieldDescriptions) first
+	^ (self runInputRows: { inputRow }) first
 ]
 
 { #category : 'public' }
@@ -194,13 +186,23 @@ P3PreparedStatement >> queryAll: inputRows [
 	inputRows isEmpty
 		ifTrue: [ ^ #() ].
 
+	^ self runInputRows: inputRows
+]
+
+{ #category : 'private' }
+P3PreparedStatement >> runInputRows: inputRows [
+	"Execute me once per row of inputRows in a single request, and answer one P3Result per row.
+	The whole request is built before anything is written, so a row that cannot be bound leaves the
+	connection as it was instead of executing the rows before it."
+
+	| messages |
 	client setSource: self source.
-	inputRows do: [ :eachRow |
-		self bindStrings: eachRow.
-		self writeExecuteMessage: 0 ].
-	client writeSyncMessage.
-	
-	^ client runExtendedQueryResults: fieldDescriptions
+	messages := Array streamContents: [ :out |
+		inputRows do: [ :each |
+			out
+				nextPut: (self bindMessageFor: each);
+				nextPut: self executeMessage ] ].
+	^ client runExtendedRequest: messages fieldDescriptions: fieldDescriptions
 ]
 
 { #category : 'accessing' }
@@ -213,43 +215,4 @@ P3PreparedStatement >> source [
 { #category : 'accessing' }
 P3PreparedStatement >> source: anSQLTemplateString [
 	source := anSQLTemplateString
-]
-
-{ #category : 'input/output' }
-P3PreparedStatement >> writeCloseMessage: aName type: aChar [
-
-	| msgBuilder |
-	msgBuilder := client newMessageBuilder.
-	msgBuilder 
-		nextPutByte: aChar asInteger;
-		nextPutString: aName.
-	client writeMessageNoFlush: msgBuilder asBytes tag: $C
-]
-
-{ #category : 'input/output' }
-P3PreparedStatement >> writeDescribeMessage: aName type: aChar [
-	"Type $S to describe a prepared statement; or $P to describe a portal."
-	| msgBuilder |
-	msgBuilder := client newMessageBuilder.
-	msgBuilder
-		nextPutByte: aChar asInteger;
-		nextPutString: aName.
-	client writeMessageNoFlush: msgBuilder asBytes tag: $D
-]
-
-{ #category : 'input/output' }
-P3PreparedStatement >> writeExecuteMessage: rowLimit [
-
-	| msgBuilder |
-	msgBuilder := client newMessageBuilder.
-	msgBuilder
-		nextPutString: '';
-		nextPutInt32: rowLimit.
-
-	client writeMessageNoFlush: msgBuilder asBytes tag: $E
-]
-
-{ #category : 'input/output' }
-P3PreparedStatement >> writeFlushMessage [
-	client writeMessage: #[] tag: $H
 ]

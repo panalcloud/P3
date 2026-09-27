@@ -21,7 +21,7 @@ New connections are created as needed.
 You can set a #configurator to further initialize new connections.
 You can use #warmUp or #warmUp: to precreate a number of connections.
 
-When an error occurs, the connection should not be reused and be closed by the caller.
+When an error occurs, I decide myself whether the connection can be reused: a failed query leaves it usable, because the rest of its response was read, but an unread response or an open transaction belongs to the caller that had it and is not the next one's to inherit. See #isReusable:. Either way the connection is pooled or closed here, never dropped.
 
 "
 Class {
@@ -82,6 +82,17 @@ P3ConnectionPool >> initialize [
 	access := Mutex new.
 	pool := OrderedCollection new: 10.
 	configurator := [ :p3Client | self assert: p3Client isWorking ]
+]
+
+{ #category : 'private' }
+P3ConnectionPool >> isReusable: connection [
+	"Is connection fit to go back into the pool after an error? Only when nothing of its last request is
+	left on it: the response was read to the end, and it is not inside a transaction, failed or not.
+	A transaction the next user would join, or an unread response it would be answered with, are not
+	its to inherit."
+
+	^ connection isResponsePending not
+		and: [ (connection transactionStatus ifNil: [ $I ]) = $I ]
 ]
 
 { #category : 'private' }
@@ -161,8 +172,9 @@ P3ConnectionPool >> warmUp: numberOfConnections [
 { #category : 'public' }
 P3ConnectionPool >> withConnection: oneArgumentBlock [
 	"Execute oneArgumentBlock with a connection (P3Client) as argument,
-	acquiring it from the pool and releasing it to the pool when done,
-	unless an error occurs (in which case the caller should close)."
+	acquiring it from the pool and releasing it to the pool when done.
+	After an error the connection is only pooled again when it is clean, see #isReusable:,
+	otherwise it is closed here: leaving it neither pooled nor closed leaks the socket."
 	
 	| connection result error |
 	connection := self acquireConnection.
@@ -170,6 +182,9 @@ P3ConnectionPool >> withConnection: oneArgumentBlock [
 	[ [ result := oneArgumentBlock value: connection ] 
 			on: Error 
 			do: [ :exception | error := exception. error pass ] ] 
-		ensure: [ error ifNil: [ self releaseConnection: connection ] ].
+		ensure: [ 
+			(error isNil or: [ self isReusable: connection ])
+				ifTrue: [ self releaseConnection: connection ]
+				ifFalse: [ [ connection close ] on: Error do: [ :exception | ] ] ].
 	^ result
 ]

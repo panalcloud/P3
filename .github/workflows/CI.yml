@@ -45,6 +45,8 @@ jobs:
         timeout-minutes: 15
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           name: CI-${{ matrix.smalltalk }}
           token: ${{ secrets.CODECOV_TOKEN }}

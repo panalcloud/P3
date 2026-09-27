@@ -48,6 +48,19 @@ P3ClientTest class >> url: stringOrUrl [
 	Url := stringOrUrl asUrl
 ]
 
+{ #category : 'private' }
+P3ClientTest >> assertJsonObject: actual hasSameEntriesAs: expected [
+	"Compare key by key instead of the two objects as a whole, so a CI failure names the one
+	mismatched key and its two values, instead of two differently ordered printStrings that
+	otherwise look almost identical."
+
+	self assert: actual keys asSet = expected keys asSet
+		description: 'expected keys ' , expected keys asSet printString , ' but got ' , actual keys asSet printString.
+	expected keysAndValuesDo: [ :key :value |
+		self assert: (actual at: key) = value
+			description: 'value for key ' , key printString , ' differs: got ' , (actual at: key) printString , ' expected ' , value printString ]
+]
+
 { #category : 'benchmarking' }
 P3ClientTest >> benchmark1Size [
 	^ 10000
@@ -449,9 +462,9 @@ P3ClientTest >> testJsonConversion [
 		bar: #(true nil -123); 
 		yourself.
 	result := client query: ('SELECT ''{1}''::json' format: { data printString }).
-	self assert: result firstFieldOfFirstRecord equals: data.
+	self assertJsonObject: result firstFieldOfFirstRecord hasSameEntriesAs: data.
 	result := client query: ('SELECT ''{1}''::jsonb' format: { data printString }).
-	self assert: result firstFieldOfFirstRecord equals: data
+	self assertJsonObject: result firstFieldOfFirstRecord hasSameEntriesAs: data
 ]
 
 { #category : 'tests' }

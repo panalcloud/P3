@@ -27,10 +27,27 @@ P3ConnectionPoolTest >> tearDown [
 
 { #category : 'tests' }
 P3ConnectionPoolTest >> testError [
+	"A query the server rejects leaves the connection usable: its response was read to the end. So the
+	connection goes back into the pool instead of being dropped."
+
 	self assert: pool size equals: 0.
 	self 
 		should: [ pool withConnection: [ :p3Client | 
 							p3Client query: 'SELECT * FROM abcdef'] ] 
+		raise: P3Error.
+	self assert: pool size equals: 1
+]
+
+{ #category : 'tests' }
+P3ConnectionPoolTest >> testErrorInsideTransactionIsNotPooled [
+	"A connection left inside a transaction is not the next caller's to inherit: every statement it
+	sends would join that transaction, and a failed one rejects them all."
+
+	self assert: pool size equals: 0.
+	self
+		should: [ pool withConnection: [ :p3Client |
+							p3Client execute: 'BEGIN'.
+							p3Client query: 'SELECT * FROM abcdef' ] ]
 		raise: P3Error.
 	self assert: pool size equals: 0
 ]

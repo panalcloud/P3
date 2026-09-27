@@ -40,6 +40,37 @@ P3Error class >> closeCompleteExpected [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> commitReportedAs: resultTag [
+	"COMMIT on a transaction already in the failed ($E) state does not commit: PostgreSQL
+	quietly runs a ROLLBACK instead and reports that as the command tag, with no error of its
+	own. P3DatabaseDriver>>commitTransaction checks the tag it gets back so a caller that
+	swallowed an earlier error is not told its unit of work was saved when it was not."
+
+	^ self new
+		info: { $C->'P3051'. $M->('COMMIT was not honored, the server reports {1}' format: { resultTag }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> connectionLostInTransaction [
+	"See P3Client>>#closeAfterFailure: reconnecting would continue in autocommit what the caller
+	still believes is one transaction."
+
+	^ self new
+		info: { $C->'P3050'. $M->'Connection was lost inside a transaction, reconnect explicitly to continue' } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> copyNotSupported [
+	"COPY streams its data in messages of its own, which I neither produce nor read."
+
+	^ self new
+		info: { $C->'P3007'. $M->'COPY to or from STDIN/STDOUT is not supported' } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> noDataExpected [
 	^ self new 
@@ -82,6 +113,16 @@ P3Error class >> readyForQueryExpected [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> unexpectedMessage: tag [
+	"A message I cannot place in the response I am reading. Its arrival means the message stream is
+	out of step, so the connection can no longer be positioned."
+
+	^ self new
+		info: { $C->'P3006'. $M->('Unexpected message {1} while reading a response' format: { tag asString }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> unexpectedMessageDuringAuthentication [
 	^ self new 
@@ -100,6 +141,24 @@ P3Error class >> unexpectedMessageDuringStartup [
 P3Error class >> unsupportedAuthenticationType: type [
 	^ self new 
 		info: { $C->'P3022'. $M->('Unsupported authentication type {1}' format: { type }) } asDictionary; 
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> unsupportedDateStyle: dateStyle [
+	"I read dates, times and timestamps as ISO 8601, which only DateStyle ISO produces."
+
+	^ self new
+		info: { $C->'P3032'. $M->('Cannot read dates under DateStyle "{1}", ISO is required' format: { dateStyle }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> unsupportedIntervalStyle: intervalStyle [
+	"P3Interval reads the 'postgres' output format only."
+
+	^ self new
+		info: { $C->'P3033'. $M->('Cannot read intervals under IntervalStyle "{1}", postgres is required' format: { intervalStyle }) } asDictionary;
 		yourself
 ]
 

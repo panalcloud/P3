@@ -103,19 +103,19 @@ P3MessageBuilder >> printByteArray: byteArray on: stream [
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printDate: date on: stream [
 	"Use ISO 8601 YYYY-MM-DD"
-	
+
 	stream nextPut: $'.
-	date printOn: stream format: #(3 2 1 $- 1 1 2).
+	self printUnquotedDate: date on: stream.
 	stream nextPut: $'
 ]
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printDateAndTime: dateAndTime on: stream [
 	"Use ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz"
-	
+
 	stream nextPut: $'.
-	dateAndTime printOn: stream.
-	stream nextPut: $' 
+	self printUnquotedDateAndTime: dateAndTime on: stream.
+	stream nextPut: $'
 ]
 
 { #category : 'printing-dispatched' }
@@ -166,20 +166,49 @@ P3MessageBuilder >> printString: string on: stream [
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printTime: time on: stream [
 	"Use ISO 8601 hh:mm:ss"
-	
+
 	stream nextPut: $'.
-	time print24: true on: stream.
+	self printUnquotedTime: time on: stream.
 	stream nextPut: $'
+]
+
+{ #category : 'printing' }
+P3MessageBuilder >> printUnquotedDate: date on: stream [
+	"ISO 8601 YYYY-MM-DD, without the quotes that a scalar parameter carries.
+	An array element is quoted with double quotes instead, see P3ArrayElementPrinter."
+
+	date printOn: stream format: #(3 2 1 $- 1 1 2)
+]
+
+{ #category : 'printing' }
+P3MessageBuilder >> printUnquotedDateAndTime: dateAndTime on: stream [
+	"ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz, without the quotes that a scalar parameter carries.
+	An array element is quoted with double quotes instead, see P3ArrayElementPrinter."
+
+	dateAndTime printOn: stream
+]
+
+{ #category : 'printing' }
+P3MessageBuilder >> printUnquotedTime: time on: stream [
+	"ISO 8601 hh:mm:ss, without the quotes that a scalar parameter carries.
+	An array element is quoted with double quotes instead, see P3ArrayElementPrinter."
+
+	time print24: true on: stream
 ]
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printValuesArray: valuesArray on: stream [
-	| first |
+	"Write the array literal {e1,e2,...}. The elements are printed by P3ArrayElementPrinter,
+	which quotes and escapes each one: the characters that separate and delimit elements can
+	also appear inside a value, and there they must not change the shape of the array."
+
+	| elementPrinter first |
+	elementPrinter := P3ArrayElementPrinter on: self.
 	first := true.
 	stream nextPut: ${.
 	valuesArray do: [ :each |
 		first ifTrue: [ first := false ] ifFalse: [ stream nextPut: $, ].
-		each p3PrintUsing: self on: stream ].
+		each p3PrintUsing: elementPrinter on: stream ].
 	stream nextPut: $}
 ]
 

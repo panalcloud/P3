@@ -33,6 +33,15 @@ P3Error class >> cannotConvertTypeOid: typeOid [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> cannotFormatObject: anObject [
+	"A formatted statement has no SQL text for anObject."
+
+	^ self new
+		info: { $C->'P3031'. $M->('Cannot format an object of class {1} as SQL' format: { anObject class name }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> closeCompleteExpected [
 	^ self new 

@@ -3,10 +3,7 @@ Tests that P3FormattedStatement writes negative numbers so that a preceding minu
 "
 Class {
 	#name : 'P3FormattedStatementNegativeNumberTest',
-	#superclass : 'TestCase',
-	#instVars : [
-		'client'
-	],
+	#superclass : 'P3StatementTestCase',
 	#category : 'P3-Tests',
 	#package : 'P3-Tests'
 }
@@ -27,26 +24,16 @@ P3FormattedStatementNegativeNumberTest >> boundSqlFor: aValue [
 	^ (client format: 'SELECT 0-$1') bind: { aValue }
 ]
 
-{ #category : 'running' }
-P3FormattedStatementNegativeNumberTest >> setUp [
-	super setUp.
-	client := P3Client new.
-	client url: P3ClientTest url.
-	client timeout: 10. "second"
-	client connect
-]
-
-{ #category : 'running' }
-P3FormattedStatementNegativeNumberTest >> tearDown [
-	client ifNotNil: [ client close ].
-	super tearDown
-]
-
 { #category : 'tests-literal' }
 P3FormattedStatementNegativeNumberTest >> testLargeNegativeIntegerDoesNotStartComment [
 	"A LargeNegativeInteger prints through a different class than a SmallInteger."
 
 	self assertNoLineCommentIn: 100 factorial negated
+]
+
+{ #category : 'tests-literal' }
+P3FormattedStatementNegativeNumberTest >> testNegativeExponentFloatDoesNotStartComment [
+	self assertNoLineCommentIn: -1.0e-10
 ]
 
 { #category : 'tests-server' }
@@ -67,6 +54,13 @@ P3FormattedStatementNegativeNumberTest >> testNegativeNumberAfterMinusKeepsTrail
 	| sql |
 	sql := (client format: 'SELECT 1-$1 AS a, ''kept'' AS b') bind: { -5 }.
 	self assert: (sql includesSubstring: '''kept''')
+]
+
+{ #category : 'tests-server' }
+P3FormattedStatementNegativeNumberTest >> testNegativeNumberAfterOperatorCharacterIsNotMergedIntoOperator [
+	"PostgreSQL reads &- as one operator, so a bare -5 right after & is a syntax error. 12 & -5 is 8."
+
+	self assert: (self valueOf: 'SELECT 12 &$1::int8' with: { -5 }) equals: 8
 ]
 
 { #category : 'tests-server' }
@@ -126,11 +120,4 @@ P3FormattedStatementNegativeNumberTest >> testSubtractingNegativeIntegerReadsBac
 	"0 minus -5 is 5. With a comment the statement is cut and the value is wrong or the query fails."
 
 	self assert: (self valueOf: 'SELECT 0-$1' with: { -5 }) equals: 5
-]
-
-{ #category : 'helpers' }
-P3FormattedStatementNegativeNumberTest >> valueOf: sqlTemplate with: arguments [
-	"Format sqlTemplate, run it with arguments and answer the single value read back."
-
-	^ ((client format: sqlTemplate) query: arguments) firstFieldOfFirstRecord
 ]

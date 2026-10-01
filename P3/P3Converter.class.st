@@ -328,7 +328,7 @@ P3Converter >> convertPolygonFrom: bytes length: length description: description
 
 { #category : 'converting' }
 P3Converter >> convertScaledDecimalFrom: bytes length: length description: description [
-	^ ScaledDecimal readFrom: (self asciiStreamFor: bytes length: length)
+	^ self scaledDecimalFrom: (self asciiStreamFor: bytes length: length) upToEnd
 ]
 
 { #category : 'converting-arrays' }
@@ -564,6 +564,18 @@ P3Converter >> printOn: stream [
 	stream space.
 	self timezone ifNotNil: [ :tmz | stream print: tmz id ].
 	stream nextPut: $)
+]
+
+{ #category : 'converting' }
+P3Converter >> scaledDecimalFrom: aString [
+	"Read the text of a numeric as a ScaledDecimal. NaN, Infinity and -Infinity are numeric values
+	that a ScaledDecimal, being a fraction, cannot hold: reading one signals a P3Error."
+
+	| text |
+	text := aString trimmed.
+	(text = 'NaN' or: [ text = 'Infinity' or: [ text = '-Infinity' ] ])
+		ifTrue: [ ^ (P3Error cannotRepresentNumeric: text) signal ].
+	^ ScaledDecimal readFrom: text readStream
 ]
 
 { #category : 'accessing' }

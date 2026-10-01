@@ -43,6 +43,15 @@ P3Error class >> cannotFormatObject: anObject [
 ]
 
 { #category : 'accessing' }
+P3Error class >> cannotRepresentNumeric: numericText [
+	"A numeric can be NaN, Infinity or -Infinity. A ScaledDecimal is a fraction and has none of them."
+
+	^ self new
+		info: { $C->'P3034'. $M->('Cannot read numeric "{1}" as a ScaledDecimal, it is not a finite number' format: { numericText }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> closeCompleteExpected [
 	^ self new 
 		info: { $C->'P3005'. $M->'CloseComplete message expected' } asDictionary; 

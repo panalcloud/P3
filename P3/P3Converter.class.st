@@ -367,7 +367,7 @@ P3Converter >> convertTimeFrom: bytes length: length description: description [
 	^ (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTime
 ]
 
-{ #category : 'converting-chronology' }
+{ #category : 'converting' }
 P3Converter >> convertTimeWithTimezoneFrom: bytes length: length description: description [
 	"TIME WITH TIME ZONE corresponds to Time plus an offset. 
 	Time does not hold a time zone nor an offset.
@@ -375,10 +375,10 @@ P3Converter >> convertTimeWithTimezoneFrom: bytes length: length description: de
 	in our connection's timezone, if they differ we correct to compensate.
 	For this to work, the connection output format must be ISO, the default"
 
-	| parser time offset connectionOffset translatedTime |
-	parser := P3ISO8601Parser on: (self asciiStreamFor: bytes length: length).
-	time := parser parseTime.
-	offset := parser parseOptionalTimezoneOffset seconds.
+	| timeAndOffset time offset connectionOffset translatedTime |
+	timeAndOffset := (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTimeWithOffset.
+	time := timeAndOffset first.
+	offset := timeAndOffset second.
 	connectionOffset := self timezone offsetForTimestamp: (ZTimestamp today + time).
 	^ offset = connectionOffset 
 		ifTrue: [ time ]

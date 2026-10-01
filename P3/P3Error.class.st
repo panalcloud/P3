@@ -51,6 +51,15 @@ P3Error class >> cannotFormatObject: anObject [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> cannotReadInfinity: aText [
+	"A date or timestamp can be infinity or -infinity. Date and DateAndTime have no infinite value, and any date I answered for it would be wrong and compare as a real one."
+
+	^ self new
+		info: { $C->'P3038'. $M->('Cannot read "{1}" as a date or timestamp, it is not a finite point in time. Select it cast to text to read it' format: { aText }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> cannotRepresentNumeric: numericText [
 	"A numeric can be NaN, Infinity or -Infinity. A ScaledDecimal is a fraction and has none of them."

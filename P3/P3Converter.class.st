@@ -240,20 +240,20 @@ P3Converter >> convertFixedBitStringFrom: bytes length: length description: desc
 	^ P3FixedBitString readFrom: (self asciiStreamFor: bytes length: length)
 ]
 
-{ #category : 'converting-arrays' }
+{ #category : 'converting' }
 P3Converter >> convertFloatArrayFrom: bytes length: length description: description [
 	| input |
 	input := ZnLimitedReadStream on: bytes limit: length.
 	input := ZnCharacterReadStream on: input encoding: self encoder. 
 	^ P3ArrayValueParser new 
 		on: input;
-		converter: [ :string | Float readFrom: string ];
+		converter: [ :string | self floatFrom: string ];
 		next
 ]
 
 { #category : 'converting' }
 P3Converter >> convertFloatFrom: bytes length: length description: description [
-	^ Float readFrom: (self asciiStreamFor: bytes length: length)
+	^ self floatFrom: (self asciiStreamFor: bytes length: length) upToEnd
 ]
 
 { #category : 'converting-arrays' }
@@ -432,6 +432,48 @@ P3Converter >> encoder [
 { #category : 'accessing' }
 P3Converter >> encoder: anObject [
 	encoder := anObject
+]
+
+{ #category : 'private' }
+P3Converter >> floatDigitsFrom: stream [
+	"The decimal digits at the current position, possibly none."
+
+	^ String streamContents: [ :out |
+		[ stream atEnd not and: [ stream peek isDigit ] ] whileTrue: [ out nextPut: stream next ] ]
+]
+
+{ #category : 'converting' }
+P3Converter >> floatFrom: aString [
+	"Read the text of a float4 or float8, as the server writes it: digits with an optional fraction and
+	an optional exponent with its own sign (1e+100, -1.5e-07), or NaN, Infinity and -Infinity.
+	The value is the exact decimal fraction rounded once to a double, so every double that the server
+	prints with the digits that identify it is read back as the same double. A negative zero keeps its sign."
+
+	| text stream negative wholeDigits fractionDigits mantissa exponent exponentDigits exponentNegative value |
+	text := aString trimmed.
+	text = 'NaN' ifTrue: [ ^ Float nan ].
+	(text = 'Infinity' or: [ text = '+Infinity' ]) ifTrue: [ ^ Float infinity ].
+	text = '-Infinity' ifTrue: [ ^ Float infinity negated ].
+	stream := text readStream.
+	negative := stream peekFor: $-.
+	negative ifFalse: [ stream peekFor: $+ ].
+	wholeDigits := self floatDigitsFrom: stream.
+	fractionDigits := (stream peekFor: $.)
+		ifTrue: [ self floatDigitsFrom: stream ]
+		ifFalse: [ '' ].
+	(wholeDigits isEmpty and: [ fractionDigits isEmpty ]) ifTrue: [ ^ (P3Error parsingFailed: aString) signal ].
+	exponent := 0.
+	((stream peekFor: $e) or: [ stream peekFor: $E ]) ifTrue: [
+		exponentNegative := stream peekFor: $-.
+		exponentNegative ifFalse: [ stream peekFor: $+ ].
+		exponentDigits := self floatDigitsFrom: stream.
+		exponentDigits isEmpty ifTrue: [ ^ (P3Error parsingFailed: aString) signal ].
+		exponent := exponentNegative ifTrue: [ exponentDigits asInteger negated ] ifFalse: [ exponentDigits asInteger ] ].
+	stream atEnd ifFalse: [ ^ (P3Error parsingFailed: aString) signal ].
+	mantissa := (wholeDigits , fractionDigits) asInteger.
+	mantissa = 0 ifTrue: [ ^ negative ifTrue: [ Float negativeZero ] ifFalse: [ 0.0 ] ].
+	value := (mantissa * (10 raisedTo: exponent - fractionDigits size)) asFloat.
+	^ negative ifTrue: [ value negated ] ifFalse: [ value ]
 ]
 
 { #category : 'initialize' }

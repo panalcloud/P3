@@ -46,6 +46,11 @@ P3ArrayElementPrinter >> printDateAndTime: dateAndTime on: stream [
 ]
 
 { #category : 'printing-dispatched' }
+P3ArrayElementPrinter >> printFloat: float on: stream [
+	self printQuoted: [ :out | builder printFloat: float on: out ] on: stream
+]
+
+{ #category : 'printing-dispatched' }
 P3ArrayElementPrinter >> printGeometricObject: geometricObject on: stream [
 	self printQuoted: [ :out | builder printGeometricObject: geometricObject on: out ] on: stream
 ]

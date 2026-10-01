@@ -278,6 +278,11 @@ P3FormattedStatement >> printDateAndTime: dateAndTime on: stream [
 	stream nextPut: $' 
 ]
 
+{ #category : 'printing' }
+P3FormattedStatement >> printFloat: float on: stream [
+	self printNumber: float on: stream
+]
+
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printGeometricObject: geometricObject on: stream [
 	"Delegate to P3GeometricObject that knows how to print itself in typed quoted PSQL text format"
@@ -299,11 +304,12 @@ P3FormattedStatement >> printNullOn: stream [
 	stream nextPutAll: 'NULL'
 ]
 
-{ #category : 'printing-dispatched' }
+{ #category : 'printing' }
 P3FormattedStatement >> printNumber: number on: stream [
 	"A negative number is written in parentheses, so a preceding minus sign cannot make a -- comment
 	and a preceding operator character cannot join with the sign.
-	A fraction is a division of two numerics, since an integer division would round it."
+	A fraction is a division of two numerics, since an integer division would round it.
+	A negative zero is a float8 text, because a numeric literal has no negative zero."
 
 	number isInteger ifTrue: [ ^ self printSigned: number printString on: stream ].
 	number isFraction ifTrue: [
@@ -315,7 +321,8 @@ P3FormattedStatement >> printNumber: number on: stream [
 	number isFloat ifTrue: [
 		number isNaN ifTrue: [ ^ stream nextPutAll: '''NaN''::float8' ].
 		number isInfinite ifTrue: [
-			^ stream nextPutAll: (number > 0 ifTrue: [ '''Infinity''::float8' ] ifFalse: [ '''-Infinity''::float8' ]) ] ].
+			^ stream nextPutAll: (number > 0 ifTrue: [ '''Infinity''::float8' ] ifFalse: [ '''-Infinity''::float8' ]) ].
+		(number isZero and: [ number printString first = $- ]) ifTrue: [ ^ stream nextPutAll: '''-0''::float8' ] ].
 	^ self printSigned: number printString on: stream
 ]
 

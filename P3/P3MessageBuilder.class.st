@@ -119,6 +119,16 @@ P3MessageBuilder >> printDateAndTime: dateAndTime on: stream [
 ]
 
 { #category : 'printing-dispatched' }
+P3MessageBuilder >> printFloat: float on: stream [
+	"The server notation for the values that have no digits. Any other float uses the shortest digits that
+	identify it, with an exponent when needed (1.0e100), which the server reads."
+
+	float isNaN ifTrue: [ ^ stream nextPutAll: 'NaN' ].
+	float isInfinite ifTrue: [ ^ stream nextPutAll: (float > 0 ifTrue: [ 'Infinity' ] ifFalse: [ '-Infinity' ]) ].
+	float printOn: stream
+]
+
+{ #category : 'printing-dispatched' }
 P3MessageBuilder >> printGeometricObject: geometricObject on: stream [
 	"Delegate to P3GeometricObject that knows how to print itself in unescaped, raw PSQL text format"
 	

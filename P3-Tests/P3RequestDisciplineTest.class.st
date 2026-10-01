@@ -174,6 +174,22 @@ P3RequestDisciplineTest >> testPreparedStatementCloseIsSynchronised [
 	self assertConnectionAnswersItsOwnQueries
 ]
 
+{ #category : 'tests - abandoned responses' }
+P3RequestDisciplineTest >> testPrintingTheClientKeepsTheLostTransactionGuard [
+	"Printing or inspecting a client reads its session. That must not forget that a transaction was lost,
+	or the next statement would run in autocommit on a new connection."
+
+	| error |
+	client execute: 'BEGIN'.
+	client closeAfterFailure.
+	client printString.
+	client session.
+	error := [ client query: 'SELECT 1'. nil ] on: P3Error do: [ :e | e ].
+	self assert: error notNil description: 'The client reconnected silently after a lost transaction'.
+	self assert: error code equals: 'P3050'
+
+]
+
 { #category : 'tests - writing requests' }
 P3RequestDisciplineTest >> testQueryAfterFailedDrainReconnects [
 	"Draining a response the server is not going to send can only fail, and then my connection is

@@ -581,6 +581,14 @@ P3Client >> isServerVersionAtLeastMajor: major minor: minor [
 ]
 
 { #category : 'testing' }
+P3Client >> isTransactionLost [
+	"Was my connection closed by a failure while a transaction was open or failed? Then I refuse to
+	reconnect silently, see #closeAfterFailure."
+
+	^ transactionLost
+]
+
+{ #category : 'testing' }
 P3Client >> isUsingUnixSocket [
 	"Following the PostgreSQL convention a host starting with a / is a path to a Unix Socket"
 	
@@ -1426,10 +1434,10 @@ P3Client >> serverVersion [
 
 { #category : 'accessing' }
 P3Client >> session [
-	"Returns the current session identifier (backend process id) if connected"
-	
-	self isConnected ifFalse: [ self clearSession ].
-	^ session
+	"Returns the current session identifier (backend process id) if connected.
+	Only reads: this is called by printing, inspecting and logging, which must not change my state."
+
+	^ self isConnected ifTrue: [ session ]
 ]
 
 { #category : 'initialize-release' }

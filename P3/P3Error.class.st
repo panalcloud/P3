@@ -198,6 +198,15 @@ P3Error class >> unsupportedIntervalStyle: intervalStyle [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> unsupportedSslMode: aMode [
+	"A url asks for a sslmode that P3 cannot honour. Connecting anyway would drop the TLS the url asks for."
+
+	^ self new
+		info: { $C->'P3037'. $M->('Cannot honour sslmode "{1}", only "disable" and "require" are supported. The server certificate is not verified, and connecting without TLS as a fallback is not implemented' format: { aMode }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error >> code [
 	"Return my unique, locale independent, 5 character string code.

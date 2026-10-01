@@ -1462,6 +1462,20 @@ P3Client >> signal: exceptionClass using: info [
 	exception signal
 ]
 
+{ #category : 'private' }
+P3Client >> sslModeOf: aUrl [
+	"Answer whether aUrl asks for TLS. Only disable, the default, and require are supported. Any other
+	mode, such as prefer, allow, verify-ca, verify-full or a misspelt one, asks for something that I do
+	not do, so it signals instead of connecting without the TLS or the verification that was asked for."
+
+	| mode |
+	mode := (aUrl queryAt: #sslmode ifAbsent: [ 'disable' ]) ifNil: [ '' ].
+	mode := mode asString.
+	mode = 'disable' ifTrue: [ ^ false ].
+	mode = 'require' ifTrue: [ ^ true ].
+	^ (P3Error unsupportedSslMode: mode) signal
+]
+
 { #category : 'private messages' }
 P3Client >> sslRequestMessage [
 	^ #[4 210 22 47] "1234 5678"
@@ -1586,16 +1600,19 @@ P3Client >> url [
 	^ url
 ]
 
-{ #category : 'initialize-release' }
+{ #category : 'accessing' }
 P3Client >> url: stringOrUrl [
 	"Set my connection settings from stringOrUrl according to the format
 	postgresql://username:password@localhost:5432/databasename?sslmode=require
 	with the minimum being psql://user@localhost , for a unix socket the format is
-	postgresql:///databasename?host=/path/to/psql.socket&user=username&password=password"
+	postgresql:///databasename?host=/path/to/psql.socket&user=username&password=password
+	The sslmode is either disable, the default, or require. Any other value signals a P3Error,
+	see #sslModeOf:."
 	
-	| url |
+	| url useSSL |
 	url := stringOrUrl asUrl.
 	self assert: (#(psql postgres postgresql) includes: url scheme).
+	useSSL := self sslModeOf: url.
 	url host
 		ifNil: [
 			url queryAt: #host ifPresent: [ :host | self host: host ].
@@ -1608,8 +1625,7 @@ P3Client >> url: stringOrUrl [
 				user: url username;
 				password: url password ].
 	self database: url firstPathSegment.
-	(url queryAt: #sslmode ifAbsent: [ #disable ]) = #require
-		ifTrue: [ self setSSL ].
+	useSSL ifTrue: [ self setSSL ].
 	url queryAt: #options ifPresent: [ :options | self startupOptions: options ]
 ]
 

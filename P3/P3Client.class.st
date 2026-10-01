@@ -551,6 +551,16 @@ P3Client >> isConnected [
 				and: [ session notNil ] ]
 ]
 
+{ #category : 'private' }
+P3Client >> isFatalError: errorInfo [
+	"Did the server end the session with this ErrorResponse? Its severity is FATAL or PANIC, and it closes the
+	socket right after sending it. V is the severity in a form that is not translated, S is the translated one."
+
+	| severity |
+	severity := errorInfo at: $V ifAbsent: [ errorInfo at: $S ifAbsent: [ '' ] ].
+	^ severity = 'FATAL' or: [ severity = 'PANIC' ]
+]
+
 { #category : 'testing' }
 P3Client >> isResponsePending [
 	"Is a response I asked for still unread? True between writing a Query or Sync message and reading
@@ -1080,17 +1090,23 @@ P3Client >> readMessageCloseAfterError [
 	^ self readMessageOnError: [ self close ]
 ]
 
-{ #category : 'input/output' }
+{ #category : 'private' }
 P3Client >> readMessageOnError: block [
 	"Read the next message belonging to the response flow. NoticeResponse, ParameterStatus and
 	NotificationResponse can arrive between any two messages, so I consume them here and keep reading
-	under the same error policy: my senders only see the messages their own sequence expects."
+	under the same error policy: my senders only see the messages their own sequence expects.
+
+	An ErrorResponse is normally followed by a ReadyForQuery, which block reads. A FATAL or PANIC one is
+	not: the server closes the socket instead, so reading on would only find the end of the stream and
+	lose the error. I close here, which also remembers a transaction that was open, and signal it."
 
 	[ message readFrom: connection.
 	  message tag = $E 
 		ifTrue: [ | info |
 			info := self errorNoticeInfo: message readStream.
-			block cull: info.
+			(self isFatalError: info)
+				ifTrue: [ self closeAfterFailure ]
+				ifFalse: [ block cull: info ].
 			self signal: P3Error using: info ].
 	  message tag = $Z
 		ifTrue: [ self noteReadyForQuery ].

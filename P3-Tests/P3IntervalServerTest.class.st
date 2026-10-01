@@ -78,13 +78,13 @@ P3IntervalServerTest >> randomFields [
 	| random |
 	random := Random seed: 20260930.
 	^ (1 to: 150) collect: [ :each | | timeSign |
-		timeSign := (random nextInt: 2) = 1 ifTrue: [ 1 ] ifFalse: [ -1 ].
-		{ (random nextInt: 21) - 11.
-		(random nextInt: 25) - 13.
-		(random nextInt: 801) - 401.
-		timeSign * ((random nextInt: 3) = 1 ifTrue: [ 0 ] ifFalse: [ (random nextInt: 200) - 1 ]).
-		timeSign * ((random nextInt: 3) = 1 ifTrue: [ 0 ] ifFalse: [ (random nextInt: 60) - 1 ]).
-		timeSign * ((random nextInt: 3) = 1 ifTrue: [ 0 ] ifFalse: [ ((random nextInt: 60000) - 1) / 1000.0 ]) } ]
+		timeSign := (random nextInteger: 2) = 1 ifTrue: [ 1 ] ifFalse: [ -1 ].
+		{ (random nextInteger: 21) - 11.
+		(random nextInteger: 25) - 13.
+		(random nextInteger: 801) - 401.
+		timeSign * ((random nextInteger: 3) = 1 ifTrue: [ 0 ] ifFalse: [ (random nextInteger: 200) - 1 ]).
+		timeSign * ((random nextInteger: 3) = 1 ifTrue: [ 0 ] ifFalse: [ (random nextInteger: 60) - 1 ]).
+		timeSign * ((random nextInteger: 3) = 1 ifTrue: [ 0 ] ifFalse: [ ((random nextInteger: 60000) - 1) / 1000.0 ]) } ]
 ]
 
 { #category : 'tests-writing' }

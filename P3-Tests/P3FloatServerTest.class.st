@@ -57,9 +57,9 @@ P3FloatServerTest >> randomPairs [
 	| random |
 	random := Random seed: 20260930.
 	^ (1 to: 150) collect: [ :each | | mantissa |
-		mantissa := (random nextInt: (1 bitShift: 52)) + (1 bitShift: 52).
-		(random nextInt: 2) = 1 ifTrue: [ mantissa := mantissa negated ].
-		mantissa -> ((random nextInt: 1900) - 1000) ]
+		mantissa := (random nextInteger: (1 bitShift: 52)) + (1 bitShift: 52).
+		(random nextInteger: 2) = 1 ifTrue: [ mantissa := mantissa negated ].
+		mantissa -> ((random nextInteger: 1900) - 1000) ]
 ]
 
 { #category : 'private' }
@@ -143,7 +143,7 @@ P3FloatServerTest >> testFloat4BuiltByServerIsReadWithinItsPrecision [
 	| random |
 	random := Random seed: 20260930.
 	150 timesRepeat: [ | pair expected actual |
-		pair := ((random nextInt: (1 bitShift: 24)) * ((random nextInt: 2) = 1 ifTrue: [ 1 ] ifFalse: [ -1 ])) -> ((random nextInt: 200) - 100).
+		pair := ((random nextInteger: (1 bitShift: 24)) * ((random nextInteger: 2) = 1 ifTrue: [ 1 ] ifFalse: [ -1 ])) -> ((random nextInteger: 200) - 100).
 		expected := self valueOfPair: pair.
 		actual := self readOf: 'SELECT ' , (self serverSqlOfPair: pair) , '::float4'.
 		self

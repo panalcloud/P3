@@ -47,10 +47,10 @@ P3FloatTest >> testReadIsExactForEveryDoubleItPrintsBack [
 	| random |
 	random := Random seed: 20260930.
 	300 timesRepeat: [ | mantissa exponent value |
-		mantissa := (random nextInt: (1 bitShift: 52)) + (1 bitShift: 52).
-		exponent := (random nextInt: 1900) - 1000.
+		mantissa := (random nextInteger: (1 bitShift: 52)) + (1 bitShift: 52).
+		exponent := (random nextInteger: 1900) - 1000.
 		value := (mantissa * (2 raisedTo: exponent)) asFloat.
-		(random nextInt: 2) = 1 ifTrue: [ value := value negated ].
+		(random nextInteger: 2) = 1 ifTrue: [ value := value negated ].
 		self
 			assert: (self readFloat: (self digitsOf: value)) = value
 			description: value printString ]

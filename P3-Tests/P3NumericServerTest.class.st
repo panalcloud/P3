@@ -50,7 +50,7 @@ P3NumericServerTest >> pairs [
 		(10 raisedTo: 30) -> 12.
 		(10 raisedTo: 30) negated + 1 -> 12.
 		1 -> 12 } , ((1 to: 100) collect: [ :each |
-			((random nextInt: (10 raisedTo: 28)) * ((random nextInt: 2) = 1 ifTrue: [ 1 ] ifFalse: [ -1 ])) -> (random nextInt: 12) ])
+			((random nextInteger: (10 raisedTo: 28)) * ((random nextInteger: 2) = 1 ifTrue: [ 1 ] ifFalse: [ -1 ])) -> (random nextInteger: 12) ])
 ]
 
 { #category : 'private' }

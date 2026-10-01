@@ -107,6 +107,11 @@ P3ArrayElementPrinter >> printTime: time on: stream [
 ]
 
 { #category : 'printing-dispatched' }
+P3ArrayElementPrinter >> printUUID: uuid on: stream [
+	self printQuoted: [ :out | builder printUUID: uuid on: out ] on: stream
+]
+
+{ #category : 'printing-dispatched' }
 P3ArrayElementPrinter >> printValuesArray: valuesArray on: stream [
 	"A nested collection is a sub-array: it keeps its own braces and is not quoted."
 

@@ -395,6 +395,11 @@ P3FormattedStatement >> printTime: time on: stream [
 ]
 
 { #category : 'printing-dispatched' }
+P3FormattedStatement >> printUUID: uuid on: stream [
+	self printString: uuid printString on: stream
+]
+
+{ #category : 'printing-dispatched' }
 P3FormattedStatement >> printValuesArray: valuesArray on: stream [
 	| first |
 	valuesArray isEmpty 

@@ -26,6 +26,15 @@ P3Error class >> bindCompleteExpected [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> cannotBindObject: anObject [
+	"A prepared statement has no parameter text for anObject. Its print string is neither SQL nor data, so it is refused instead of stored."
+
+	^ self new
+		info: { $C->'P3035'. $M->('Cannot bind an object of class {1} as a parameter' format: { anObject class name }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> cannotConvertTypeOid: typeOid [
 	^ self new 
@@ -128,6 +137,15 @@ P3Error class >> postgreSQLServerDidNotHonorSSLConnectionRequest [
 P3Error class >> readyForQueryExpected [
 	^ self new 
 		info: { $C->'P3003'. $M->'ReadyForQuery message expected' } asDictionary; 
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> statementClosed: statementName [
+	"A closed prepared statement has no connection and can no longer run."
+
+	^ self new
+		info: { $C->'P3036'. $M->('Prepared statement "{1}" is closed' format: { statementName }) } asDictionary;
 		yourself
 ]
 

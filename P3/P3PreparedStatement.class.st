@@ -196,6 +196,7 @@ P3PreparedStatement >> runInputRows: inputRows [
 	connection as it was instead of executing the rows before it."
 
 	| messages |
+	client ifNil: [ ^ (P3Error statementClosed: name) signal ].
 	client setSource: self source.
 	messages := Array streamContents: [ :out |
 		inputRows do: [ :each |

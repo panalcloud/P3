@@ -54,6 +54,28 @@ P3StatementValueTest >> testCharacterIsOneCharacterText [
 	self assert: value equals: 'a'
 ]
 
+{ #category : 'tests-arrays' }
+P3StatementValueTest >> testCharactersAndRefusedObjectsInArrays [
+	"A Character in an array is one character text. An object with no SQL meaning is refused or
+	stored unchanged, never written as its Smalltalk print string."
+
+	self assert: (self valueOf: 'SELECT ($1::text[])[1]' with: { { $a } }) equals: 'a'.
+	self assert: (self quietly: [ self valueOf: 'SELECT ($1::text[])[1]' with: { { Object new } } ]) equals: nil
+]
+
+{ #category : 'tests-dates' }
+P3StatementValueTest >> testDateAndTimeBoundAsTextCarryNoQuotes [
+	"A date or time bound to a text parameter is stored as its digits. The single quotes of an SQL
+	literal are not part of the value."
+
+	self
+		assert: (self valueOf: 'SELECT $1::text' with: { Date newDay: 31 month: 1 year: 2024 })
+		equals: '2024-01-31'.
+	self
+		assert: (self valueOf: 'SELECT $1::text' with: { Time hour: 13 minute: 5 second: 9 nanoSecond: 500000000 })
+		equals: '13:05:09.5'
+]
+
 { #category : 'tests-dates' }
 P3StatementValueTest >> testDatesRoundTrip [
 	{ Date newDay: 31 month: 1 year: 2024. Date newDay: 15 month: 3 year: 44. Date newDay: 1 month: 1 year: 1 }
@@ -188,7 +210,10 @@ P3StatementValueTest >> testTimestampKeepsInstantAcrossOffsets [
 
 { #category : 'tests-text' }
 P3StatementValueTest >> testUuidReachesServerIntact [
-	self
-		assert: (self valueOf: 'SELECT $1::uuid::text' with: { UUID fromString: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-		equals: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+	"A UUID is a ByteArray in the image, but the server expects the text form of a uuid, not bytea hex."
+
+	| uuid |
+	uuid := UUID fromString: '123e4567-e89b-42d3-a456-426614174000'.
+	self assert: (self valueOf: 'SELECT $1::uuid::text' with: { uuid }) equals: '123e4567-e89b-42d3-a456-426614174000'.
+	self assert: (self valueOf: 'SELECT ($1::uuid[])[1]::text' with: { { uuid } }) equals: '123e4567-e89b-42d3-a456-426614174000'
 ]

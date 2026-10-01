@@ -102,20 +102,16 @@ P3MessageBuilder >> printByteArray: byteArray on: stream [
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printDate: date on: stream [
-	"Use ISO 8601 YYYY-MM-DD"
+	"Use ISO 8601 YYYY-MM-DD. A parameter is the value itself, so it has no SQL quotes."
 
-	stream nextPut: $'.
-	self printUnquotedDate: date on: stream.
-	stream nextPut: $'
+	self printUnquotedDate: date on: stream
 ]
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printDateAndTime: dateAndTime on: stream [
-	"Use ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz"
+	"Use ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz. A parameter is the value itself, so it has no SQL quotes."
 
-	stream nextPut: $'.
-	self printUnquotedDateAndTime: dateAndTime on: stream.
-	stream nextPut: $'
+	self printUnquotedDateAndTime: dateAndTime on: stream
 ]
 
 { #category : 'printing-dispatched' }
@@ -152,9 +148,13 @@ P3MessageBuilder >> printNullOn: stream [
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printObject: object on: stream [
-	"In general, just use the standard print string representation"
-	
-	object printOn: stream 
+	"Integers, booleans and characters have a parameter text. Any other object has none: its print
+	string is not data, so it is refused. A Fraction is refused too, it has no exact decimal text."
+
+	(object isNumber and: [ (object isKindOf: Fraction) not ]) ifTrue: [ ^ object printOn: stream ].
+	(object == true or: [ object == false ]) ifTrue: [ ^ object printOn: stream ].
+	object isCharacter ifTrue: [ ^ stream nextPut: object ].
+	^ (P3Error cannotBindObject: object) signal
 ]
 
 { #category : 'printing-dispatched' }
@@ -175,11 +175,16 @@ P3MessageBuilder >> printString: string on: stream [
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printTime: time on: stream [
-	"Use ISO 8601 hh:mm:ss"
+	"Use ISO 8601 hh:mm:ss.s. A parameter is the value itself, so it has no SQL quotes."
 
-	stream nextPut: $'.
-	self printUnquotedTime: time on: stream.
-	stream nextPut: $'
+	self printUnquotedTime: time on: stream
+]
+
+{ #category : 'printing-dispatched' }
+P3MessageBuilder >> printUUID: uuid on: stream [
+	"The text form of a uuid, 8-4-4-4-12 hexadecimal digits"
+
+	uuid printOn: stream
 ]
 
 { #category : 'printing' }
@@ -200,10 +205,14 @@ P3MessageBuilder >> printUnquotedDateAndTime: dateAndTime on: stream [
 
 { #category : 'printing' }
 P3MessageBuilder >> printUnquotedTime: time on: stream [
-	"ISO 8601 hh:mm:ss, without the quotes that a scalar parameter carries.
-	An array element is quoted with double quotes instead, see P3ArrayElementPrinter."
+	"ISO 8601 hh:mm:ss, followed by the fraction of the second when there is one, without the quotes
+	that an SQL literal carries. An array element is quoted with double quotes instead, see P3ArrayElementPrinter."
 
-	time print24: true on: stream
+	time print24: true on: stream.
+	time nanoSecond > 0 ifTrue: [
+		stream
+			nextPut: $.;
+			nextPutAll: ((time nanoSecond printPaddedWith: $0 to: 9) trimRight: [ :each | each = $0 ]) ]
 ]
 
 { #category : 'printing-dispatched' }

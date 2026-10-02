@@ -48,6 +48,71 @@ P3ChronologyServerTest >> testInfiniteValuesAreRefusedAndTheConnectionSurvives [
 	self assert: (self readOf: 'SELECT ''infinity''::date::text') equals: 'infinity'
 ]
 
+{ #category : 'tests - ordinary values' }
+P3ChronologyServerTest >> testOrdinaryDatesStillRead [
+	"The parser got strict. Every date the server prints for a year of the common era must still read,
+	for years of four digits and of five, and be the day that the server counts."
+
+	#(#(1 1 1) #(1 12 31) #(4 2 29) #(1900 3 1) #(1970 1 1) #(2000 2 29) #(2020 10 13) #(9999 12 31) #(10000 1 1) #(12345 6 7)) do: [ :each | | sql date |
+		sql := 'make_date(' , each first printString , ', ' , each second printString , ', ' , each third printString , ')'.
+		date := self readOf: 'SELECT ' , sql.
+		self assert: date class equals: Date.
+		self assert: date year equals: each first.
+		self assert: date monthIndex equals: each second.
+		self assert: date dayOfMonth equals: each third.
+		self
+			assert: (date - (Date year: 1 month: 1 day: 1)) days
+			equals: (self readOf: 'SELECT ' , sql , ' - date ''0001-01-01''') ]
+]
+
+{ #category : 'tests - ordinary values' }
+P3ChronologyServerTest >> testOrdinaryTimestampsStillReadInEveryZone [
+	"Timestamps with and without a fraction of a second, shown in zones with whole hour, half hour and
+	quarter hour offsets and in daylight saving time. The offset and the instant are the server's."
+
+	#('UTC' 'Europe/Amsterdam' 'America/New_York' 'Asia/Kolkata' 'Pacific/Chatham' 'America/St_Johns') do: [ :zone |
+		client execute: 'SET timezone = ''' , zone , ''''.
+		#('0' '45' '45.1' '45.123456' '59.999999') do: [ :seconds | | sql parsed epoch |
+			sql := 'make_timestamptz(2020, 7, 4, 13, 30, ' , seconds , ', ''UTC'')'.
+			parsed := self readOf: 'SELECT ' , sql.
+			epoch := self readOf: 'SELECT extract(epoch FROM ' , sql , ')::numeric'.
+			self
+				assert: (parsed - self unixEpoch) asNanoSeconds
+				equals: (epoch * 1000000000) asInteger.
+			self
+				assert: parsed offset asSeconds
+				equals: (self readOf: 'SELECT extract(timezone FROM ' , sql , ')::int') ] ]
+]
+
+{ #category : 'tests - ordinary values' }
+P3ChronologyServerTest >> testOrdinaryTimestampsWithoutZoneAndTimesStillRead [
+	"timestamp, time and timetz, with and without a fraction. The session is in UTC so that nothing is
+	shifted and the fields can be compared as they are."
+
+	client execute: 'SET timezone = ''UTC'''.
+	self
+		assert: (self readOf: 'SELECT make_timestamp(2020, 10, 13, 10, 49, 48.251174)')
+		equals: (DateAndTime year: 2020 month: 10 day: 13 hour: 10 minute: 49 second: 48 nanoSecond: 251174000 offset: Duration zero).
+	self
+		assert: (self readOf: 'SELECT make_timestamp(2020, 10, 13, 0, 0, 0)')
+		equals: (DateAndTime year: 2020 month: 10 day: 13 hour: 0 minute: 0 second: 0 nanoSecond: 0 offset: Duration zero).
+	self
+		assert: (self readOf: 'SELECT make_time(7, 8, 9)')
+		equals: (Time hour: 7 minute: 8 second: 9).
+	self
+		assert: (self readOf: 'SELECT make_time(23, 59, 59.999999)')
+		equals: (Time hour: 23 minute: 59 second: 59 nanoSecond: 999999000).
+	self
+		assert: (self readOf: 'SELECT make_time(0, 0, 0)')
+		equals: (Time hour: 0 minute: 0 second: 0).
+	self
+		assert: (self readOf: 'SELECT ''12:00:00+02''::timetz')
+		equals: (Time hour: 10 minute: 0 second: 0).
+	self
+		assert: (self readOf: 'SELECT ''12:00:00.5-03:30''::timetz')
+		equals: (Time hour: 15 minute: 30 second: 0 nanoSecond: 500000000)
+]
+
 { #category : 'tests' }
 P3ChronologyServerTest >> testTimeWithZoneKeepsOffsetSeconds [
 	"12:00:00 at +05:30:15 is 06:29:45 in UTC."
@@ -59,6 +124,23 @@ P3ChronologyServerTest >> testTimeWithZoneKeepsOffsetSeconds [
 	self
 		assert: (self readOf: 'SELECT ''12:00:00+05:30''::timetz')
 		equals: (Time hour: 6 minute: 30 second: 0)
+]
+
+{ #category : 'tests - ordinary values' }
+P3ChronologyServerTest >> testTimeWithZoneShiftsAcrossMidnight [
+	"01:00 at +05:00 is 20:00 of the day before in UTC, 23:30 at -05:00 is 04:30 of the next day.
+	The fraction of a second is kept through the shift."
+
+	client execute: 'SET timezone = ''UTC'''.
+	self
+		assert: (self readOf: 'SELECT ''01:00:00+05''::timetz')
+		equals: (Time hour: 20 minute: 0 second: 0).
+	self
+		assert: (self readOf: 'SELECT ''23:30:00.25-05''::timetz')
+		equals: (Time hour: 4 minute: 30 second: 0 nanoSecond: 250000000).
+	self
+		assert: (self readOf: 'SELECT ''00:00:00+00''::timetz')
+		equals: (Time hour: 0 minute: 0 second: 0)
 ]
 
 { #category : 'tests' }

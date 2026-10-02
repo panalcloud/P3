@@ -373,20 +373,24 @@ P3Converter >> convertTimeWithTimezoneFrom: bytes length: length description: de
 	Time does not hold a time zone nor an offset.
 	We compare the offset coming in with the offset for that time today 
 	in our connection's timezone, if they differ we correct to compensate.
+	The correction is made in nanoseconds: Time arithmetic works in whole seconds and would drop
+	the fraction of a second.
 	For this to work, the connection output format must be ISO, the default"
 
-	| timeAndOffset time offset connectionOffset translatedTime |
+	| timeAndOffset time offset connectionOffset nanoSecondsPerDay shifted seconds |
 	timeAndOffset := (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTimeWithOffset.
 	time := timeAndOffset first.
 	offset := timeAndOffset second.
 	connectionOffset := self timezone offsetForTimestamp: (ZTimestamp today + time).
-	^ offset = connectionOffset 
-		ifTrue: [ time ]
-		ifFalse: [ 
-			translatedTime := time subtractTime: (offset - connectionOffset).
-			^ translatedTime seconds < 0 
-				ifTrue: [ translatedTime addSeconds: 24 * 60 * 60 ]
-				ifFalse: [ translatedTime ] ]
+	offset = connectionOffset ifTrue: [ ^ time ].
+	nanoSecondsPerDay := 86400 * 1000000000.
+	shifted := ((time asSeconds * 1000000000) + time nanoSecond - (offset - connectionOffset) asNanoSeconds) \\ nanoSecondsPerDay.
+	seconds := shifted // 1000000000.
+	^ Time
+		hour: seconds // 3600
+		minute: seconds // 60 \\ 60
+		second: seconds \\ 60
+		nanoSecond: shifted \\ 1000000000
 ]
 
 { #category : 'converting-special' }

@@ -166,6 +166,26 @@ P3RequestDisciplineTest >> testCopyInMetWhileRecoveringFromAFailureIsRejectedWit
 ]
 
 { #category : 'tests - unexpected messages' }
+P3RequestDisciplineTest >> testCopyInRejectionOwesNoResponseAfterwards [
+	"The Sync that follows CopyFail replaces the one the server dropped, so exactly one ReadyForQuery was
+	owed and exactly one was read. A counter left above zero would make the next request drain, a counter
+	hidden at zero would leave a ReadyForQuery in the socket: the second one is caught by the two
+	queries, the first by the count."
+
+	| statement |
+	client execute: 'CREATE TEMP TABLE ' , self tableName , ' (i int)'.
+	statement := client prepare: 'COPY ' , self tableName , ' FROM STDIN' named: self statementName.
+	self should: [ statement execute: #() ] raise: P3Error.
+	self assert: client pendingResponses equals: 0.
+	self assert: client transactionStatus equals: $I.
+	self assertConnectionAnswersItsOwnQueries.
+	"A second refusal on the same connection behaves the same"
+	self should: [ statement execute: #() ] raise: P3Error.
+	self assert: client pendingResponses equals: 0.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - unexpected messages' }
 P3RequestDisciplineTest >> testCopyInThroughPreparedStatementInsideATransactionKeepsTheConnection [
 	"The server fails the transaction, as it does for any error. Closing the connection would turn that
 	into a lost transaction, which is a different thing: the caller can still roll back."
@@ -212,6 +232,21 @@ P3RequestDisciplineTest >> testCopyOutIsRejectedCleanly [
 ]
 
 { #category : 'tests - unexpected messages' }
+P3RequestDisciplineTest >> testCopyOutThroughPreparedStatementIsRejectedCleanly [
+	"COPY TO STDOUT in an extended request streams CopyData and CopyDone messages after the BindComplete.
+	They have to be refused and skipped, with the one ReadyForQuery that the request owes read, and with
+	no extra Sync sent: only a COPY FROM STDIN needs one."
+
+	| statement elapsed |
+	statement := client prepare: 'COPY (SELECT 1) TO STDOUT' named: self statementName.
+	elapsed := [ self should: [ statement execute: #() ] raise: P3Error ] timeToRun.
+	self assert: elapsed < 2 seconds.
+	self assert: client isConnected.
+	self assert: client pendingResponses equals: 0.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - unexpected messages' }
 P3RequestDisciplineTest >> testEmptyQuery [
 	"An empty query is answered with EmptyQueryResponse in place of a CommandComplete. It is not an
 	error and must not be read as the start of a data section."
@@ -232,6 +267,24 @@ P3RequestDisciplineTest >> testLocalFailureBeforeWriteLeavesNoPendingResponse [
 	self should: [ client query: nil ] raise: Error.
 	self deny: client isResponsePending.
 	self assert: (client query: 'SELECT 111') data equals: #( #( 111 ) )
+]
+
+{ #category : 'tests - ordinary requests' }
+P3RequestDisciplineTest >> testOrdinaryRequestsOweExactlyOneResponseEach [
+	"The ordinary path of the request kind that the COPY handling depends on. Simple and extended
+	requests, run in turn on one connection, each leave nothing owed, and a batch is still one response."
+
+	| statement |
+	self assert: (client query: 'SELECT 1') firstFieldOfFirstRecord equals: 1.
+	self assert: client pendingResponses equals: 0.
+	statement := client prepare: 'SELECT $1::int4 + 10' named: self statementName.
+	self assert: (statement query: #( 1 )) firstFieldOfFirstRecord equals: 11.
+	self assert: client pendingResponses equals: 0.
+	self assert: (statement queryAll: #( #( 1 ) #( 2 ) #( 3 ) )) size equals: 3.
+	self assert: client pendingResponses equals: 0.
+	self assert: (client query: 'SELECT 2; SELECT 3') records size equals: 1.
+	self assert: client pendingResponses equals: 0.
+	self assertConnectionAnswersItsOwnQueries
 ]
 
 { #category : 'tests - abandoned responses' }
@@ -257,6 +310,23 @@ P3RequestDisciplineTest >> testPreparedStatementCloseIsSynchronised [
 	statement := client prepare: 'SELECT $1::int4' named: self statementName.
 	statement close.
 	self deny: client isResponsePending.
+	self assert: client transactionStatus equals: $I.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - ordinary requests' }
+P3RequestDisciplineTest >> testPrintingAConnectedClientDoesNotChangeIt [
+	"Printing, inspecting and logging read the session. On a working connection that must leave
+	everything as it was."
+
+	| session |
+	session := client session.
+	self assert: session equals: (client query: 'SELECT pg_backend_pid()') firstFieldOfFirstRecord.
+	client printString.
+	client printStateOn: (WriteStream on: String new).
+	self assert: client session equals: session.
+	self assert: client isConnected.
+	self deny: client isTransactionLost.
 	self assert: client transactionStatus equals: $I.
 	self assertConnectionAnswersItsOwnQueries
 ]
@@ -306,6 +376,24 @@ P3RequestDisciplineTest >> testReconnectInsideTransactionSignals [
 	self should: [ client query: 'SELECT 1' ] raise: P3Error.
 	client connect.
 	self assert: (client query: 'SELECT 111') data equals: #( #( 111 ) )
+]
+
+{ #category : 'tests - ordinary requests' }
+P3RequestDisciplineTest >> testSessionIsNilWhenTheSocketIsGone [
+	"When the socket is gone without the client having been told to close, the session that it
+	remembers belongs to a backend that no longer serves it. #session answers nil, and still does not
+	change anything. The next request reconnects, which is another session."
+
+	| session |
+	session := client session.
+	self assert: session notNil.
+	(client instVarNamed: 'connection') socket close.
+	self deny: client isConnected.
+	self assert: client session isNil.
+	self assert: client session isNil.
+	self assert: (client query: 'SELECT 5') firstFieldOfFirstRecord equals: 5.
+	self assert: client session notNil.
+	self deny: client session = session
 ]
 
 { #category : 'tests - abandoned responses' }

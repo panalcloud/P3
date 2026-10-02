@@ -182,6 +182,38 @@ P3StatementValueTest >> testObjectPrintingAsSqlIsNotRun [
 	rows ifNotNil: [ self assert: rows size equals: 1 ]
 ]
 
+{ #category : 'tests-ordinary' }
+P3StatementValueTest >> testSupportedValueTypesReachTheServerAndComeBack [
+	"One ordinary value of every kind that a statement accepts, bound to a parameter of the matching
+	type and read back. The builder refuses objects it has no text for, so this protects the ones it
+	has: a type that stops being supported fails here, and not in an application."
+
+	{
+		{ 'SELECT $1::int8'. 42. 42 }.
+		{ 'SELECT $1::int8'. -7. -7 }.
+		{ 'SELECT $1::int8'. 0. 0 }.
+		{ 'SELECT $1::numeric'. 2 raisedTo: 70. 2 raisedTo: 70 }.
+		{ 'SELECT $1::numeric'. 12.50s2. 12.50s2 }.
+		{ 'SELECT $1::numeric'. -0.25s2. -0.25s2 }.
+		{ 'SELECT $1::float8'. 1.5. 1.5 }.
+		{ 'SELECT $1::float8'. -2.25e10. -2.25e10 }.
+		{ 'SELECT $1::boolean'. true. true }.
+		{ 'SELECT $1::boolean'. false. false }.
+		{ 'SELECT $1::text'. 'plain text'. 'plain text' }.
+		{ 'SELECT $1::text'. #symbol. 'symbol' }.
+		{ 'SELECT $1::text'. $x. 'x' }.
+		{ 'SELECT $1::bytea'. #[ 0 1 92 255 ]. #[ 0 1 92 255 ] }.
+		{ 'SELECT $1::date'. Date newDay: 29 month: 2 year: 2020. Date newDay: 29 month: 2 year: 2020 }.
+		{ 'SELECT $1::time'. Time hour: 13 minute: 5 second: 9. Time hour: 13 minute: 5 second: 9 }.
+		{ 'SELECT $1::uuid::text'. UUID fromString: '123e4567-e89b-42d3-a456-426614174000'. '123e4567-e89b-42d3-a456-426614174000' }.
+		{ 'SELECT $1::text IS NULL'. nil. true } } do: [ :each |
+			| value |
+			value := self valueOf: each first with: { each second }.
+			self
+				assert: value = each third
+				description: each first , ' with ' , each second printString , ' gave ' , value printString ]
+]
+
 { #category : 'tests-text' }
 P3StatementValueTest >> testTextRoundTrips [
 	#('' 'plain' 'it''s' '"quoted"' 'ñ ü 日本 😀' 'a\b\' 'a;b -- c /* d */' '$1 $$ $tag$')

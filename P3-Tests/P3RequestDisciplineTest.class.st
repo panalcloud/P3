@@ -101,6 +101,30 @@ P3RequestDisciplineTest >> testCloseAfterAbandonedResponse [
 ]
 
 { #category : 'tests - unexpected messages' }
+P3RequestDisciplineTest >> testCopyInInAnAbandonedResponseIsRejectedWithoutHang [
+	"A response abandoned half read is drained before the next request. If it contains a COPY FROM
+	STDIN the drain must refuse it too, otherwise the next, innocent, request waits for the timeout."
+
+	| elapsed |
+	client execute: 'CREATE TEMP TABLE ' , self tableName , ' (i int)'.
+	[ client converter
+		mapOid: 23
+		type: #int4
+		to: [ :bytes :length :description | Warning signal: 'abandon this response' ].
+	  [ client query: 'SELECT 7; COPY ' , self tableName , ' FROM STDIN' ]
+		on: Warning
+		do: [ :warning | warning return: nil ] ]
+		ensure: [ client converter
+			mapOid: 23
+			type: #int4
+			to: #convertIntegerFrom:length:description: ].
+	self assert: client isResponsePending.
+	elapsed := [ self assertConnectionAnswersItsOwnQueries ] timeToRun.
+	self assert: elapsed < 2 seconds.
+	self assert: client isConnected
+]
+
+{ #category : 'tests - unexpected messages' }
 P3RequestDisciplineTest >> testCopyInIsRejectedWithoutHang [
 	"COPY FROM STDIN makes the server wait for data I cannot send. It has to be refused at once, by
 	telling the server to abandon the copy: waiting for the timeout and closing means the request is
@@ -112,6 +136,69 @@ P3RequestDisciplineTest >> testCopyInIsRejectedWithoutHang [
 		self should: [ client query: 'COPY ' , self tableName , ' FROM STDIN' ] raise: P3Error ]
 			timeToRun.
 	self assert: elapsed < 2 seconds.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - unexpected messages' }
+P3RequestDisciplineTest >> testCopyInMetWhileRecoveringFromAFailureIsRejectedWithoutHang [
+	"A conversion failure in the first statement of a multiple statement query leaves the rest of the
+	response unread, and the second statement is a COPY FROM STDIN. The recovery reads that response
+	to its end, so it meets the CopyInResponse and has to refuse it, or it waits for a ReadyForQuery
+	that the server only sends after the copy."
+
+	| elapsed |
+	client execute: 'CREATE TEMP TABLE ' , self tableName , ' (i int)'.
+	elapsed := [
+		[ client converter
+			mapOid: 23
+			type: #int4
+			to: [ :bytes :length :description | 1 / 0 ].
+		self should: [ client query: 'SELECT 1; COPY ' , self tableName , ' FROM STDIN' ] raise: ZeroDivide ]
+			ensure: [ client converter
+				mapOid: 23
+				type: #int4
+				to: #convertIntegerFrom:length:description: ] ]
+			timeToRun.
+	self assert: elapsed < 2 seconds.
+	self assert: client isConnected.
+	self deny: client isResponsePending.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - unexpected messages' }
+P3RequestDisciplineTest >> testCopyInThroughPreparedStatementInsideATransactionKeepsTheConnection [
+	"The server fails the transaction, as it does for any error. Closing the connection would turn that
+	into a lost transaction, which is a different thing: the caller can still roll back."
+
+	| statement |
+	client execute: 'CREATE TEMP TABLE ' , self tableName , ' (i int)'.
+	client execute: 'BEGIN'.
+	statement := client prepare: 'COPY ' , self tableName , ' FROM STDIN' named: self statementName.
+	self should: [ statement execute: #() ] raise: P3Error.
+	self assert: client isConnected.
+	self assert: client transactionStatus equals: $E.
+	client execute: 'ROLLBACK'.
+	self assert: client transactionStatus equals: $I.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - unexpected messages' }
+P3RequestDisciplineTest >> testCopyInThroughPreparedStatementIsRejectedWithoutHang [
+	"In the extended protocol the server ignores the Sync that ended the request while it waits for copy
+	data, and after CopyFail it discards everything until a Sync it has not yet got. Without one, no
+	ReadyForQuery comes: the client would wait for the whole timeout and then drop the connection,
+	taking the temporary table with it."
+
+	| statement elapsed |
+	client execute: 'CREATE TEMP TABLE ' , self tableName , ' (i int)'.
+	statement := client prepare: 'COPY ' , self tableName , ' FROM STDIN' named: self statementName.
+	elapsed := [
+		self should: [ statement execute: #() ] raise: P3Error ]
+			timeToRun.
+	self assert: elapsed < 2 seconds.
+	self assert: client isConnected.
+	self deny: client isResponsePending.
+	self assert: (client query: 'SELECT count(*) FROM ' , self tableName) firstFieldOfFirstRecord equals: 0.
 	self assertConnectionAnswersItsOwnQueries
 ]
 

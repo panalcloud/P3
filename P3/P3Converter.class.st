@@ -17,7 +17,8 @@ Class {
 		'asciiWriteStream',
 		'timestampClass',
 		'dateStyle',
-		'intervalStyle'
+		'intervalStyle',
+		'unknownTypeConverter'
 	],
 	#category : 'P3-Support',
 	#package : 'P3',
@@ -81,11 +82,9 @@ P3Converter >> clientEncoding: aString [
 
 { #category : 'converting' }
 P3Converter >> convert: bytes length: length description: description [
-	"A type without a converter is answered as the text the server sent."
-
 	| converter |
 	converter := (map mappingAt: description typeOid ifAbsent: [ nil ])
-		ifNil: [ ^ self convertStringFrom: bytes length: length description: description ]
+		ifNil: [ unknownTypeConverter ifNil: [ ^ (P3Error cannotConvertTypeOid: description typeOid) signal ] ]
 		ifNotNil: [ :mapping | mapping converter ].
 	^ converter isSymbol
 		ifTrue: [ self perform: converter with: bytes with: length with: description ]
@@ -509,6 +508,11 @@ P3Converter >> intervalStyle: aString [
 ]
 
 { #category : 'accessing' }
+P3Converter >> mapArrayOid: anArrayOid type: aTypeName elementOid: anElementOid [
+	^ map mapArrayOid: anArrayOid type: aTypeName elementOid: anElementOid
+]
+
+{ #category : 'accessing' }
 P3Converter >> mapOid: anOoid type: aTypename to: aBlockOrSymbol [
 	^ map mapOid: anOoid type: aTypename to: aBlockOrSymbol
 ]
@@ -578,6 +582,14 @@ P3Converter >> timezone: anObject [
 { #category : 'accessing' }
 P3Converter >> typeMap [
 	^ map
+]
+
+{ #category : 'accessing' }
+P3Converter >> unknownTypeConverter: aSelectorBlockOrNil [
+	"Read the values of a type without a converter with aSelectorBlockOrNil, a selector or a block like
+	the ones of #mapOid:type:to:. Without one, which is the default, such a value signals a P3Error."
+
+	unknownTypeConverter := aSelectorBlockOrNil
 ]
 
 { #category : 'testing' }

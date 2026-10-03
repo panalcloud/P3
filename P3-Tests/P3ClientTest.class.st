@@ -366,22 +366,27 @@ P3ClientTest >> testEmptyString [
 P3ClientTest >> testEnum [
 	| result |
 
-	result := client 
-		execute: 'DROP TABLE IF EXISTS table1;';
-		execute: 'DROP TYPE IF EXISTS mood';
-		execute: 'CREATE TYPE mood AS ENUM (''sad'', ''ok'', ''happy'');';
-		execute: 'CREATE TABLE table1 (name text, current_mood mood );';
-		execute: 'INSERT INTO table1 VALUES (''Moe'', ''happy'');'.
+	[ 
+		result := client 
+			execute: 'DROP TABLE IF EXISTS table1;';
+			execute: 'DROP TYPE IF EXISTS mood';
+			execute: 'CREATE TYPE mood AS ENUM (''sad'', ''ok'', ''happy'');';
+			execute: 'CREATE TABLE table1 (name text, current_mood mood );';
+			execute: 'INSERT INTO table1 VALUES (''Moe'', ''happy'');'.
 				
-	result := client loadEnums.
-	
-	self assert: (result includes: #mood).
+		result := client loadEnums.
 		
-	result := client query: 'SELECT * FROM table1 WHERE current_mood = ''happy'';'.
-		
-	self assert: result firstRecord equals: #('Moe' #happy)	
-	
-
+		self assert: (result includes: #mood).
+			
+		result := client query: 'SELECT * FROM table1 WHERE current_mood = ''happy'';'.
+			
+		self assert: result firstRecord equals: #('Moe' #happy) ]
+		ensure: [ 
+			[ client
+				execute: 'DROP TABLE IF EXISTS table1';
+				execute: 'DROP TYPE IF EXISTS mood' ]
+				on: P3Notification
+				do: [ :notification | notification resume ] ]
 ]
 
 { #category : 'tests' }

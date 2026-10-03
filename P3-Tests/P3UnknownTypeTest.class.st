@@ -1,5 +1,5 @@
 "
-I test how P3Converter reads column types it has no converter for. Such a value is answered as the text the server sent, and the connection stays usable. Standard array types are converted element by element.
+I test the opt-in fallback of P3Client>>#enableUnknownTypesAsText: where a column type P3 has no converter for is answered as the text the server sent, and the connection stays usable. The fallback survives a reconnect. Standard array types are converted element by element with or without the fallback.
 "
 Class {
 	#name : 'P3UnknownTypeTest',
@@ -7,6 +7,28 @@ Class {
 	#category : 'P3-Tests',
 	#package : 'P3-Tests'
 }
+
+{ #category : 'running' }
+P3UnknownTypeTest >> setUp [
+	super setUp.
+	client enableUnknownTypesAsText: true
+]
+
+{ #category : 'tests' }
+P3UnknownTypeTest >> testFallbackCanBeDisabledAgain [
+	client enableUnknownTypesAsText: false.
+	self deny: client isUnknownTypesAsTextEnabled.
+	self should: [ client query: 'SELECT ''10.0.0.1''::inet' ] raise: P3Error
+]
+
+{ #category : 'tests' }
+P3UnknownTypeTest >> testFallbackSurvivesReconnect [
+	self assert: client isUnknownTypesAsTextEnabled.
+	client close.
+	self
+		assert: (client query: 'SELECT ''10.0.0.1''::inet') firstFieldOfFirstRecord
+		equals: '10.0.0.1'
+]
 
 { #category : 'tests' }
 P3UnknownTypeTest >> testStandardArrayTypesAreConverted [

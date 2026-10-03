@@ -25,6 +25,25 @@ Class {
 }
 
 { #category : 'accessing' }
+P3Converter class >> arrayElementOids [
+	"Answer the array type OIDs read through the converter of their element type,
+	as an association from array OID to element OID. See P3Converter>>#convertArrayFrom:length:description:."
+
+	^ IdentityDictionary newFromPairs: #(
+		1003 19
+		1005 21
+		1014 1042
+		1016 20
+		1021 700
+		1115 1114
+		1182 1082
+		1185 1184
+		1231 1700
+		2951 2950
+		3807 3802 )
+]
+
+{ #category : 'accessing' }
 P3Converter class >> isoDateStyleTypeOids [
 	"The type OIDs whose text I read as ISO 8601: date, time, timestamp, timestamptz, timetz.
 	Only DateStyle ISO produces that text. See P3Converter>>#dateStyle:."
@@ -49,7 +68,8 @@ P3Converter class >> supportedTypes [
 
 { #category : 'accessing' }
 P3Converter class >> typeMap [
-	^ IdentityDictionary newFromPairs: #(
+	| map |
+	map := IdentityDictionary newFromPairs: #(
 			16 #(bool #convertBooleanFrom:length:description:) 
 			17 #(bytea #convertByteArrayFrom:length:description:) 
 			18 #(#'"char"' #convertCharacterFrom:length:description:)
@@ -101,7 +121,12 @@ P3Converter class >> typeMap [
 			718 #(circle #convertCircleFrom:length:description:)
 			"vectors"
 			30 #( oidvector #convertIntegerVectorFrom:length:description: )
-		)
+		).
+	self arrayElementOids keysAndValuesDo: [ :arrayOid :elementOid |
+		map
+			at: arrayOid
+			put: { ('_' , (map at: elementOid) first) asSymbol. #convertArrayFrom:length:description: } ].
+	^ map
 ]
 
 { #category : 'input/output' }
@@ -138,6 +163,8 @@ P3Converter >> clientEncoding: aString [
 
 { #category : 'converting' }
 P3Converter >> convert: bytes length: length description: description [
+	"A type without a converter is answered as the text the server sent."
+
 	^ map 
 		at: description typeOid 
 		ifPresent: [ :type | | lambda |
@@ -145,7 +172,26 @@ P3Converter >> convert: bytes length: length description: description [
 	 		lambda isSymbol 
 				ifTrue: [ self perform: lambda with: bytes with: length with: description ]
 				ifFalse: [ lambda value: bytes value: length value: description ] ]
-		ifAbsent: [ (P3Error cannotConvertTypeOid: description typeOid) signal ]
+		ifAbsent: [ self convertStringFrom: bytes length: length description: description ]
+]
+
+{ #category : 'converting-arrays' }
+P3Converter >> convertArrayFrom: bytes length: length description: description [
+	"Read an array whose element type has its own converter. Each element text is converted
+	as if the server had sent it as a column of the element type."
+
+	| input elementDescription |
+	elementDescription := P3RowFieldDescription new
+		typeOid: (self class arrayElementOids at: description typeOid);
+		yourself.
+	input := ZnLimitedReadStream on: bytes limit: length.
+	input := ZnCharacterReadStream on: input encoding: self encoder.
+	^ P3ArrayValueParser new
+		on: input;
+		converter: [ :string | | encoded |
+			encoded := self encoder encodeString: string.
+			self convert: encoded readStream length: encoded size description: elementDescription ];
+		next
 ]
 
 { #category : 'converting' }

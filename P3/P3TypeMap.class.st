@@ -162,21 +162,11 @@ P3TypeMap >> nameAt: anOid ifAbsent: aBlock [
 
 { #category : 'private' }
 P3TypeMap >> newUnknownNameAt: anOid [
-	"Write 'oid' and the decimal digits of anOid, an unsigned integer, straight into a String of the exact size."
+	"Stream 'oid' and the digits of anOid. An OID is a SmallInteger, which prints its digits straight onto the stream."
 
-	| digitCount limit name rest |
-	digitCount := 1.
-	limit := 10.
-	[ anOid >= limit ] whileTrue: [
-		digitCount := digitCount + 1.
-		limit := limit * 10 ].
-	name := String new: 3 + digitCount.
-	name at: 1 put: $o; at: 2 put: $i; at: 3 put: $d.
-	rest := anOid.
-	digitCount to: 1 by: -1 do: [ :index |
-		name at: 3 + index put: (Character digitValue: rest \\ 10).
-		rest := rest // 10 ].
-	^ name asSymbol
+	^ (String streamContents: [ :stream |
+		stream nextPutAll: 'oid'.
+		anOid printOn: stream ]) asSymbol
 ]
 
 { #category : 'accessing' }

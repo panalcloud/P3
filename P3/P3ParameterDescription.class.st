@@ -25,9 +25,7 @@ P3ParameterDescription >> printOn: stream [
 
 { #category : 'accessing' }
 P3ParameterDescription >> typeName [
-	^ (P3Converter typeMap
-		at: self typeOid
-		ifAbsent: [ ^ ('oid' , self typeOid printString) asSymbol ]) first
+	^ P3TypeMap standard typeNameAt: self typeOid
 ]
 
 { #category : 'accessing' }

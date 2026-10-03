@@ -89,9 +89,7 @@ P3RowFieldDescription >> typeModifier: anObject [
 
 { #category : 'accessing' }
 P3RowFieldDescription >> typeName [
-	^ (P3Converter typeMap
-		at: self typeOid
-		ifAbsent: [ ^ ('oid' , self typeOid printString) asSymbol ]) first
+	^ P3TypeMap standard typeNameAt: self typeOid
 ]
 
 { #category : 'accessing' }

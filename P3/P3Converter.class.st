@@ -25,25 +25,6 @@ Class {
 }
 
 { #category : 'accessing' }
-P3Converter class >> arrayElementOids [
-	"Answer the array type OIDs read through the converter of their element type,
-	as an association from array OID to element OID. See P3Converter>>#convertArrayFrom:length:description:."
-
-	^ IdentityDictionary newFromPairs: #(
-		1003 19
-		1005 21
-		1014 1042
-		1016 20
-		1021 700
-		1115 1114
-		1182 1082
-		1185 1184
-		1231 1700
-		2951 2950
-		3807 3802 )
-]
-
-{ #category : 'accessing' }
 P3Converter class >> isoDateStyleTypeOids [
 	"The type OIDs whose text I read as ISO 8601: date, time, timestamp, timestamptz, timetz.
 	Only DateStyle ISO produces that text. See P3Converter>>#dateStyle:."
@@ -63,70 +44,7 @@ P3Converter class >> postgresIntervalStyleTypeOids [
 P3Converter class >> supportedTypes [
 	"Return the list of PostgreSQL internal type names that we can convert to objects."
 	
-	^ self typeMap values collect: #first
-]
-
-{ #category : 'accessing' }
-P3Converter class >> typeMap [
-	| map |
-	map := IdentityDictionary newFromPairs: #(
-			16 #(bool #convertBooleanFrom:length:description:) 
-			17 #(bytea #convertByteArrayFrom:length:description:) 
-			18 #(#'"char"' #convertCharacterFrom:length:description:)
-			19 #(name #convertStringFrom:length:description:) 
-			20 #(int8 #convertIntegerFrom:length:description:) 
-			21 #(int2 #convertIntegerFrom:length:description:) 
-			22 #(int2vector #convertIntegerVectorFrom:length:description:)
-			23 #(int4 #convertIntegerFrom:length:description:) 
-			24 #(regproc #convertStringFrom:length:description:)
-			25 #(text #convertStringFrom:length:description:) 
-			26 #(oid #convertIntegerFrom:length:description:) 
-			28 #(xid #convertIntegerFrom:length:description:)
-			29 #(cid #convertIntegerFrom:length:description:)
-			194 #(pg_node_tree #convertStringFrom:length:description:)
-			700 #(float4 #convertFloatFrom:length:description:) 
-			701 #(float8 #convertFloatFrom:length:description:) 
-			1042 #(bpchar #convertStringFrom:length:description:) 
-			1043 #(varchar #convertStringFrom:length:description:)
-			1560 #(bit #convertFixedBitStringFrom:length:description:)
-			1562 #(varbit #convertBitStringFrom:length:description:)
-			1700 #(numeric #convertScaledDecimalFrom:length:description:) 
-			2278 #(void #convertVoidFrom:length:description:)
-			"chronology"
-			1082 #(date #convertDateFrom:length:description:) 
-			1083 #(time #convertTimeFrom:length:description:) 
-			1114 #(timestamp #convertDateAndTimeWithoutTimezoneFrom:length:description:) 
-			1184 #(timestamptz #convertDateAndTimeFrom:length:description:)
-			1186 #(interval #convertIntervalFrom:length:description:)
-			1266 #(timetz #convertTimeWithTimezoneFrom:length:description:)
-			"special"
-			114 #(json #convertJsonFrom:length:description:)
-			2950 #(uuid #convertUuidFrom:length:description:)
-			3802 #(jsonb #convertJsonFrom:length:description:)
-			"arrays"
-			1000 #(#'_bool' #convertBooleanArrayFrom:length:description:)
-			1007 #(#'_int4' #convertIntegerArrayFrom:length:description:)
-			1009 #(#'_text' #convertStringArrayFrom:length:description:)
-			1015 #(#'_varchar' #convertStringArrayFrom:length:description:)
-			1022 #(#'_float8' #convertFloatArrayFrom:length:description:)
-			1028 #(#'_oid' #convertIntegerArrayFrom:length:description:)
-			1034 #(#'_aclitem' #convertStringArrayFrom:length:description:)
-			"geometric"
-			600 #(point #convertPointFrom:length:description:)
-			601 #(lseg #convertLineSegmentFrom:length:description:)
-			602 #(path #convertPathFrom:length:description:)
-			603 #(box #convertBoxFrom:length:description:)
-			604 #(polygon #convertPolygonFrom:length:description:)
-			628 #(line #convertLineFrom:length:description:)
-			718 #(circle #convertCircleFrom:length:description:)
-			"vectors"
-			30 #( oidvector #convertIntegerVectorFrom:length:description: )
-		).
-	self arrayElementOids keysAndValuesDo: [ :arrayOid :elementOid |
-		map
-			at: arrayOid
-			put: { ('_' , (map at: elementOid) first) asSymbol. #convertArrayFrom:length:description: } ].
-	^ map
+	^ P3TypeMap standard supportedTypes
 ]
 
 { #category : 'input/output' }
@@ -165,14 +83,13 @@ P3Converter >> clientEncoding: aString [
 P3Converter >> convert: bytes length: length description: description [
 	"A type without a converter is answered as the text the server sent."
 
-	^ map 
-		at: description typeOid 
-		ifPresent: [ :type | | lambda |
-			lambda := type second.
-	 		lambda isSymbol 
-				ifTrue: [ self perform: lambda with: bytes with: length with: description ]
-				ifFalse: [ lambda value: bytes value: length value: description ] ]
-		ifAbsent: [ self convertStringFrom: bytes length: length description: description ]
+	| converter |
+	converter := (map mappingAt: description typeOid ifAbsent: [ nil ])
+		ifNil: [ ^ self convertStringFrom: bytes length: length description: description ]
+		ifNotNil: [ :mapping | mapping converter ].
+	^ converter isSymbol
+		ifTrue: [ self perform: converter with: bytes with: length with: description ]
+		ifFalse: [ converter value: bytes value: length value: description ]
 ]
 
 { #category : 'converting-arrays' }
@@ -182,7 +99,7 @@ P3Converter >> convertArrayFrom: bytes length: length description: description [
 
 	| input elementDescription |
 	elementDescription := P3RowFieldDescription new
-		typeOid: (self class arrayElementOids at: description typeOid);
+		typeOid: (map mappingAt: description typeOid ifAbsent: [ self error: 'Not an array type' ]) elementOid;
 		yourself.
 	input := ZnLimitedReadStream on: bytes limit: length.
 	input := ZnCharacterReadStream on: input encoding: self encoder.
@@ -556,7 +473,9 @@ P3Converter >> initializeFrom: properties [
 
 { #category : 'initialize' }
 P3Converter >> initializeTypeMap [
-	map := self class typeMap
+	"My own extension of the standard map: #mapOid:type:to: and the session's output styles change it."
+
+	map := P3TypeMap standard extension
 ]
 
 { #category : 'private' }
@@ -566,12 +485,13 @@ P3Converter >> installConvertersFor: typeOids refusing: aBlockOrNil [
 	made here instead of on every value read. A caller that installed its own converter for one of these
 	OIDs loses it when a style changes."
 
-	| standard |
-	standard := self class typeMap.
 	typeOids do: [ :oid |
-		| type |
-		type := standard at: oid.
-		self mapOid: oid type: type first to: (aBlockOrNil ifNil: [ type second ]) ]
+		aBlockOrNil
+			ifNil: [ map restoreOid: oid ]
+			ifNotNil: [ map
+				mapOid: oid
+				type: (P3TypeMap standard nameAt: oid ifAbsent: [ oid ])
+				to: aBlockOrNil ] ]
 ]
 
 { #category : 'accessing' }
@@ -590,8 +510,7 @@ P3Converter >> intervalStyle: aString [
 
 { #category : 'accessing' }
 P3Converter >> mapOid: anOoid type: aTypename to: aBlockOrSymbol [
-
-	^ map at: anOoid put: { aTypename . aBlockOrSymbol }	
+	^ map mapOid: anOoid type: aTypename to: aBlockOrSymbol
 ]
 
 { #category : 'accessing' }
@@ -654,6 +573,11 @@ P3Converter >> timezone [
 { #category : 'accessing' }
 P3Converter >> timezone: anObject [
 	timezone := anObject
+]
+
+{ #category : 'accessing' }
+P3Converter >> typeMap [
+	^ map
 ]
 
 { #category : 'testing' }

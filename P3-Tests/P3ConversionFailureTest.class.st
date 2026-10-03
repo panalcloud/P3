@@ -8,7 +8,7 @@ otherwise the next query on the same connection reads the previous query's messa
 
 Most of my tests make int4 unconvertible on purpose (see #withUnconvertibleInt4Do:) instead of
 relying on a type P3Converter happens not to cover, so they keep testing the recovery path as
-P3Converter typeMap grows.
+P3TypeMap standard grows.
 
 #testCatalogTypesAreConvertible and #testTypeNameOfUnknownTypeOid cover the converter coverage
 for pg_catalog types.
@@ -225,7 +225,7 @@ P3ConversionFailureTest >> testTypeModifierIsSigned [
 
 { #category : 'tests' }
 P3ConversionFailureTest >> testTypeNameOfUnknownTypeOid [
-	"typeName answers a Symbol for a type in P3Converter typeMap and the Integer OID for any
+	"typeName answers a Symbol for a type in P3TypeMap standard and the Integer OID for any
 	other, so a caller cannot use the answer without first knowing which it got. Describing a
 	statement needs no converter, so this works even for a type nothing can read.
 

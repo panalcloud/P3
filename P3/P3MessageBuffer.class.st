@@ -12,7 +12,8 @@ Class {
 	#instVars : [
 		'tag',
 		'payload',
-		'size'
+		'size',
+		'partial'
 	],
 	#category : 'P3-Support',
 	#package : 'P3',
@@ -38,6 +39,14 @@ P3MessageBuffer >> initializeForSize: actualSize [
 	payload setFrom: 1 to: size
 ]
 
+{ #category : 'testing' }
+P3MessageBuffer >> isPartial [
+	"True when my last read stopped inside a message. The stream is then not at a message boundary, and
+	nothing can be read from it any more."
+
+	^ partial == true
+]
+
 { #category : 'accessing' }
 P3MessageBuffer >> payloadCopy [
 	^ self rawByteBuffer copyFrom: 1 to: size
@@ -48,16 +57,19 @@ P3MessageBuffer >> rawByteBuffer [
 	^ payload originalContents
 ]
 
-{ #category : 'initialization' }
+{ #category : 'reading' }
 P3MessageBuffer >> readFrom: readStream [
 	| byte length |
+	partial := false.
 	(byte := readStream next)
 		ifNil: [ ^ ConnectionClosed signal ].
+	partial := true.
 	self tag: byte asCharacter.
 	length := (self uint32From: readStream) - 4.
 	self initializeForSize: length.
 	length > 0
-		ifTrue: [ readStream next: self size into: self rawByteBuffer ]
+		ifTrue: [ readStream next: self size into: self rawByteBuffer ].
+	partial := false
 ]
 
 { #category : 'accessing' }

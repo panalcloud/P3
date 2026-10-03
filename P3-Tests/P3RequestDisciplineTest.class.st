@@ -415,12 +415,12 @@ P3RequestDisciplineTest >> testSimpleQueryAfterAbandonedPreparedStatementRespons
 	self assertConnectionAnswersItsOwnQueries
 ]
 
-{ #category : 'tests - retrying' }
+{ #category : 'tests' }
 P3RequestDisciplineTest >> testTimeoutIsNotRetriedAfterRequestSent [
-	"A statement that runs longer than the timeout has already reached the server and is running
-	there. Retrying it on a fresh connection executes it a second time. The elapsed time says which
-	happened: one attempt costs the timeout, a retry costs the retry delay and another full timeout
-	on top of it."
+	"A statement that runs longer than the timeout has already reached the server. Retrying it on a fresh
+	connection would run it a second time. It is cancelled instead, so it runs zero times to completion, and the
+	connection stays open. The elapsed time says that it was not retried: one attempt costs the timeout, a retry
+	costs the retry delay and another full timeout on top of it."
 
 	| elapsed |
 	client execute: 'DROP TABLE IF EXISTS ' , self tableName.
@@ -437,8 +437,9 @@ P3RequestDisciplineTest >> testTimeoutIsNotRetriedAfterRequestSent [
 			should: [ extraClient execute: 'INSERT INTO ' , self tableName , ' SELECT 1 FROM pg_sleep(3)' ]
 			raise: ConnectionTimedOut ] timeToRun.
 	self assert: elapsed < 4 seconds.
-	self deny: extraClient isConnected.
-	self assert: self waitForRowCount equals: 1
+	self assert: extraClient isConnected.
+	(Delay forSeconds: 3) wait.
+	self assert: (client query: 'SELECT count(*) FROM ' , self tableName) firstFieldOfFirstRecord equals: 0
 ]
 
 { #category : 'private' }

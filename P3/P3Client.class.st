@@ -1551,14 +1551,14 @@ P3Client >> saslSCRAMSHA256FirstMessage: scram [
 
 { #category : 'private - authentication' }
 P3Client >> scramSHA256 [
+	"Answer a new exchange for each login: it holds the nonces and the challenge of one handshake.
+	Only the salted password is shared between logins, see P3SCRAM>>#saltedPassword."
+
 	self password ifNil: [ P3Error passwordRequired signal ].
-	^ P3SCRAM
-		storeAt: self url
-		ifAbsentPut: [ 
-			P3SCRAM new
-				sha256;
-				password: self password;
-				yourself ]
+	^ P3SCRAM new
+		sha256;
+		password: self password;
+		yourself
 ]
 
 { #category : 'private' }

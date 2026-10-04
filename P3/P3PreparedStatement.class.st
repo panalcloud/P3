@@ -122,7 +122,12 @@ P3PreparedStatement >> execute: inputRow [
 { #category : 'public' }
 P3PreparedStatement >> executeBatch: inputRows [
 	"Execute this SQL query multiple (inputRow size) times in a single network roundtrip.
-	Assume no rows will be returned."
+	Assume no rows will be returned.
+
+	The rows are sent in one request that ends in a single Sync, so outside of a transaction the server
+	runs the whole batch as one implicit transaction: when row n fails, rows 1 to n - 1 are rolled back
+	too. For the same reason a statement that cannot run inside a transaction block, like VACUUM or
+	CREATE INDEX CONCURRENTLY, fails when it is batched. Execute those one at a time."
 
 	inputRows isEmpty
 		ifTrue: [ ^ #() ].
@@ -206,7 +211,9 @@ P3PreparedStatement >> query: inputRow [
 { #category : 'public' }
 P3PreparedStatement >> queryAll: inputRows [
 	"Execute this SQL query multiple times.
-	Answer a collection of P3Result objects with the field descriptions and rows."
+	Answer a collection of P3Result objects with the field descriptions and rows.
+	All rows are sent in one request, so they run as one implicit transaction outside of a transaction
+	block, see #executeBatch:."
 
 	inputRows isEmpty
 		ifTrue: [ ^ #() ].

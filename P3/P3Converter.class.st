@@ -70,6 +70,24 @@ P3Converter >> asciiStreamFor: bytes length: length [
 	^ asciiReadStream 
 ]
 
+{ #category : 'converting' }
+P3Converter >> byteArrayFromEscapeFormat: text [
+	"Read the bytea text of bytea_output = escape: printable bytes as they are, a backslash as two of
+	them, any other byte as a backslash and three octal digits."
+
+	| in |
+	in := text readStream.
+	^ ByteArray streamContents: [ :out |
+		[ in atEnd ] whileFalse: [ | byte |
+			byte := in next.
+			byte = 92
+				ifFalse: [ out nextPut: byte ]
+				ifTrue: [
+					in peek = 92
+						ifTrue: [ out nextPut: in next ]
+						ifFalse: [ out nextPut: (self octalValueOf: (in next: 3)) ] ] ] ]
+]
+
 { #category : 'accessing' }
 P3Converter >> clientEncoding: aString [
 	"Read values with the encoding the server says it is sending. An encoding I have no encoder for
@@ -140,10 +158,17 @@ P3Converter >> convertBoxFrom: bytes length: length description: description [
 
 { #category : 'converting' }
 P3Converter >> convertByteArrayFrom: bytes length: length description: description [
-	| size byteArray digitValues |
-	self assert: (bytes next: 2) = #[92 120]. "\x"
+	"The text of a bytea is \x followed by hex digits when bytea_output is hex, the default, and the
+	escape format otherwise. The server does not report that setting, but the formats cannot be
+	confused: the escape format writes a backslash only as two of them or as three octal digits."
+
+	| head size byteArray digitValues |
+	length < 2 ifTrue: [ ^ self byteArrayFromEscapeFormat: (bytes next: length) ].
+	head := bytes next: 2.
+	head = #[92 120] "\x"
+		ifFalse: [ ^ self byteArrayFromEscapeFormat: head , (bytes next: length - 2) ].
 	size := (length - 2) // 2.
-	digitValues := #(-1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 4 5 6 7 8 9 -1 -1 -1 -1 -1 -1 -1 10 11 12 13 14 15 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 10 11 12 13 14 15 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1).
+	digitValues := #(-1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 4 5 6 7 8 9 -1 -1 -1 -1 -1 -1 -1 10 11 12 13 14 15 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 10 11 12 13 14 15 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1).
 	byteArray := ByteArray new: size.
 	1 to: size do: [ :index | | value |
 		value := digitValues at: bytes next + 1.
@@ -154,12 +179,18 @@ P3Converter >> convertByteArrayFrom: bytes length: length description: descripti
 
 { #category : 'converting' }
 P3Converter >> convertCharacterFrom: bytes length: length description: description [
-	"""char"" (OID 18): PostgreSQL's internal single-byte type, always exactly one byte, not
-	to be confused with bpchar/varchar (which read as String) or one encoded character of
-	text."
+	"The internal single-byte type char of PostgreSQL (OID 18), not to be confused with bpchar and
+	varchar (which read as String) or one encoded character of text. The server writes the zero
+	byte as an empty text, and from PostgreSQL 15 a byte with the high bit set as a backslash and
+	three octal digits."
 
-	self assert: length = 1.
-	^ Character value: bytes next
+	| text |
+	length = 0 ifTrue: [ ^ Character value: 0 ].
+	length = 1 ifTrue: [ ^ Character value: bytes next ].
+	text := bytes next: length.
+	^ (length = 4 and: [ text first = 92 ])
+		ifTrue: [ Character value: (self octalValueOf: text allButFirst) ]
+		ifFalse: [ (P3Error unreadableValue: 'char' text: text asString) signal ]
 ]
 
 { #category : 'converting-geometric' }
@@ -523,6 +554,16 @@ P3Converter >> noteSessionParameter: key value: value [
 	key = 'TimeZone' ifTrue: [ ^ self serverTimezone: value ].
 	key = 'DateStyle' ifTrue: [ ^ self dateStyle: value ].
 	key = 'IntervalStyle' ifTrue: [ ^ self intervalStyle: value ]
+]
+
+{ #category : 'converting' }
+P3Converter >> octalValueOf: threeDigitBytes [
+	"The value of three ASCII octal digits, like the 200 of a backslash and 200."
+
+	^ threeDigitBytes inject: 0 into: [ :sum :digit |
+		(digit between: 48 and: 55) ifFalse: [
+			(P3Error unreadableValue: 'octal escape' text: threeDigitBytes asString) signal ].
+		sum * 8 + (digit - 48) ]
 ]
 
 { #category : 'printing' }

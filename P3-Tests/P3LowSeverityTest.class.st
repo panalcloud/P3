@@ -39,6 +39,17 @@ P3LowSeverityTest >> testApplicationNameDefaultsToThePharoVersionAndCanBeChanged
 ]
 
 { #category : 'tests' }
+P3LowSeverityTest >> testBatchRunsAsOneImplicitTransaction [
+	| insert |
+	client execute: 'CREATE TEMP TABLE p3l_batch(i int PRIMARY KEY)'.
+	insert := client prepare: 'INSERT INTO p3l_batch VALUES ($1)'.
+	self should: [ insert executeBatch: { { 1 }. { 2 }. { 2 } } ] raise: P3Error.
+	self assert: (client query: 'SELECT count(*) FROM p3l_batch') firstFieldOfFirstRecord equals: 0.
+	self should: [ (client prepare: 'VACUUM') executeBatch: { #(). #() } ] raise: P3Error.
+	self assert: (client query: 'SELECT 5') firstFieldOfFirstRecord equals: 5
+]
+
+{ #category : 'tests' }
 P3LowSeverityTest >> testBoundEventIsEmittedOncePerRowOfTheSentRequest [
 	| statement rows bound |
 	statement := client prepare: 'SELECT $1::int + 1'.
@@ -47,6 +58,48 @@ P3LowSeverityTest >> testBoundEventIsEmittedOncePerRowOfTheSentRequest [
 	self assert: bound equals: rows.
 	bound := self boundValuesDuring: [ statement query: #( 7 ) ].
 	self assert: bound equals: { #( 7 ) }
+]
+
+{ #category : 'tests' }
+P3LowSeverityTest >> testByteaReadsTheEscapeFormat [
+	| sql |
+	sql := 'SELECT ''\x00ff415c7e5c5c''::bytea, ''\x''::bytea, ''\x5c78''::bytea'.
+	client execute: 'SET bytea_output = escape'.
+	self assert: (client query: sql) firstRecord equals: { #[0 255 65 92 126 92 92]. #[]. #[92 120] }.
+	client execute: 'SET bytea_output = hex'.
+	self assert: (client query: sql) firstRecord equals: { #[0 255 65 92 126 92 92]. #[]. #[92 120] }
+]
+
+{ #category : 'tests' }
+P3LowSeverityTest >> testCharTypeReadsEveryByteValue [
+	| values |
+	values := (client query: 'SELECT 0::"char", 65::"char", 92::"char", (-128)::"char", (-1)::"char"') firstRecord.
+	self assert: values equals: { Character value: 0. $A. $\. Character value: 128. Character value: 255 }
+]
+
+{ #category : 'tests' }
+P3LowSeverityTest >> testConnectionEventCarriesNoSecrets [
+	| other events event |
+	other := P3Client new url: 'psql://someone:s3cret@db.example:5432/payroll'.
+	(other instVarNamed: 'properties')
+		at: 'backend_secret_key' put: 424242;
+		at: 'backend_process_id' put: 7.
+	events := OrderedCollection new.
+	P3LogEvent announcer
+		when: P3ConnectionEstablishedEvent
+		do: [ :each | events add: each ]
+		for: self.
+	[ other logConnected ] ensure: [ P3LogEvent announcer unsubscribe: self ].
+	self assert: events size equals: 1.
+	event := events first.
+	self deny: (event settings includesKey: #password).
+	self deny: (event properties includesKey: 'backend_secret_key').
+	self assert: event user equals: 'someone'.
+	self assert: event host equals: 'db.example'.
+	self assert: (event properties at: 'backend_process_id') equals: 7.
+	self deny: (event printString includesSubstring: 's3cret').
+	self assert: other password equals: 's3cret'.
+	self assert: ((other instVarNamed: 'properties') at: 'backend_secret_key') equals: 424242
 ]
 
 { #category : 'tests' }
@@ -75,9 +128,37 @@ P3LowSeverityTest >> testEmptyPreparedQueryKeepsTheConnection [
 ]
 
 { #category : 'tests' }
+P3LowSeverityTest >> testEscapeFormatTextWithoutAServer [
+	| converter |
+	converter := P3Converter new.
+	self assert: (converter byteArrayFromEscapeFormat: 'a\\b\000\377z' asByteArray) equals: #[97 92 98 0 255 122].
+	self should: [ converter byteArrayFromEscapeFormat: '\9zz' asByteArray ] raise: P3Error.
+	self should: [ converter octalValueOf: 'xyz' asByteArray ] raise: P3Error
+]
+
+{ #category : 'tests' }
 P3LowSeverityTest >> testFirstFieldOfEmptyResultIsNil [
 	self assert: (client query: 'SELECT 1 WHERE false') firstFieldOfFirstRecord isNil.
 	self assert: (client query: 'SELECT 1 WHERE false') firstRecord isNil
+]
+
+{ #category : 'tests' }
+P3LowSeverityTest >> testMessageBufferReleasesTheMemoryOfOneLargeMessage [
+	| buffer small |
+	buffer := P3MessageBuffer new.
+	buffer initializeForSize: 100.
+	small := buffer rawByteBuffer.
+	buffer initializeForSize: 200.
+	self assert: buffer rawByteBuffer == small.
+	buffer initializeForSize: 3 * 1024 * 1024.
+	self assert: buffer capacity >= (3 * 1024 * 1024).
+	self assert: buffer size equals: 3 * 1024 * 1024.
+	buffer initializeForSize: 50.
+	self assert: buffer capacity < P3MessageBuffer retainedCapacity.
+	self assert: buffer size equals: 50.
+	buffer initializeForSize: 2 * 1024 * 1024.
+	buffer initializeForSize: P3MessageBuffer retainedCapacity.
+	self assert: buffer capacity < (2 * 1024 * 1024)
 ]
 
 { #category : 'tests' }

@@ -29,11 +29,6 @@ P3ConnectionEstablishedEvent >> authenticationType [
 		ifAbsent: [ nil ]
 ]
 
-{ #category : 'initialization' }
-P3ConnectionEstablishedEvent >> clearPassword [
-	settings removeKey: #password
-]
-
 { #category : 'accessing' }
 P3ConnectionEstablishedEvent >> database [
 	^ settings at: #database ifAbsent: [ nil ]
@@ -47,11 +42,6 @@ P3ConnectionEstablishedEvent >> host [
 { #category : 'testing' }
 P3ConnectionEstablishedEvent >> isSSL [
 	^ settings at: #ssl ifAbsent: [ false ]
-]
-
-{ #category : 'accessing' }
-P3ConnectionEstablishedEvent >> password [
-	^ settings at: #password ifAbsent: [ nil ]
 ]
 
 { #category : 'accessing' }

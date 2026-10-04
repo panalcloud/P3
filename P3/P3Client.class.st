@@ -903,9 +903,12 @@ P3Client >> logBinding: statement inputValues: inputValues [
 
 { #category : 'private - logging' }
 P3Client >> logConnected [
+	"The event carries what describes the connection, not what authenticates it: the password and
+	the backend secret key, which is enough to cancel any query of this session, stay with me."
+
 	(self newLogEvent: P3ConnectionEstablishedEvent)
-		settings: settings copy;
-		properties: properties copy;
+		settings: (settings copy removeKey: #password ifAbsent: [ nil ]; yourself);
+		properties: (properties copy removeKey: 'backend_secret_key' ifAbsent: [ nil ]; yourself);
 		emit
 ]
 

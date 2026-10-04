@@ -200,6 +200,15 @@ P3Error class >> unknownTimezone: zoneName [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> unreadableValue: typeName text: valueText [
+	"The text of a value is not in any format the server writes for its type."
+
+	^ self new
+		info: { $C->'P3041'. $M->('Cannot read the {1} value "{2}", it is not in a format the server writes' format: { typeName. valueText }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> unsupportedAuthenticationType: type [
 	^ self new 

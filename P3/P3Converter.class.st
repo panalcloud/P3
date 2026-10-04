@@ -15,7 +15,11 @@ Class {
 		'stringWriteStream',
 		'asciiReadStream',
 		'asciiWriteStream',
-		'timestampClass'
+		'timestampClass',
+		'dateStyle',
+		'intervalStyle',
+		'unknownTypeConverter',
+		'unknownTimezoneName'
 	],
 	#category : 'P3-Support',
 	#package : 'P3',
@@ -23,60 +27,26 @@ Class {
 }
 
 { #category : 'accessing' }
-P3Converter class >> supportedTypes [
-	"Return the list of PostgreSQL internal type names that we can convert to objects."
-	
-	^ self typeMap values collect: #first
+P3Converter class >> isoDateStyleTypeOids [
+	"The type OIDs whose text I read as ISO 8601: date, time, timestamp, timestamptz, timetz.
+	Only DateStyle ISO produces that text. See P3Converter>>#dateStyle:."
+
+	^ #( 1082 1083 1114 1184 1266 )
 ]
 
 { #category : 'accessing' }
-P3Converter class >> typeMap [
-	^ IdentityDictionary newFromPairs: #(
-			16 #(bool #convertBooleanFrom:length:description:) 
-			17 #(bytea #convertByteArrayFrom:length:description:) 
-			19 #(name #convertStringFrom:length:description:) 
-			20 #(int8 #convertIntegerFrom:length:description:) 
-			21 #(int2 #convertIntegerFrom:length:description:) 
-			23 #(int4 #convertIntegerFrom:length:description:) 
-			25 #(text #convertStringFrom:length:description:) 
-			26 #(oid #convertIntegerFrom:length:description:) 
-			700 #(float4 #convertFloatFrom:length:description:) 
-			701 #(float8 #convertFloatFrom:length:description:) 
-			1042 #(bpchar #convertStringFrom:length:description:) 
-			1043 #(varchar #convertStringFrom:length:description:)
-			1560 #(bit #convertFixedBitStringFrom:length:description:)
-			1562 #(varbit #convertBitStringFrom:length:description:)
-			1700 #(numeric #convertScaledDecimalFrom:length:description:) 
-			2278 #(void #convertVoidFrom:length:description:)
-			"chronology"
-			1082 #(date #convertDateFrom:length:description:) 
-			1083 #(time #convertTimeFrom:length:description:) 
-			1114 #(timestamp #convertDateAndTimeWithoutTimezoneFrom:length:description:) 
-			1184 #(timestamptz #convertDateAndTimeFrom:length:description:)
-			1186 #(interval #convertIntervalFrom:length:description:)
-			1266 #(timetz #convertTimeWithTimezoneFrom:length:description:)
-			"special"
-			114 #(json #convertJsonFrom:length:description:)
-			2950 #(uuid #convertUuidFrom:length:description:)
-			3802 #(jsonb #convertJsonFrom:length:description:)
-			"arrays"
-			1000 #(#'_bool' #convertBooleanArrayFrom:length:description:)
-			1007 #(#'_int4' #convertIntegerArrayFrom:length:description:)
-			1009 #(#'_text' #convertStringArrayFrom:length:description:)
-			1015 #(#'_varchar' #convertStringArrayFrom:length:description:)
-			1022 #(#'_float8' #convertFloatArrayFrom:length:description:)
-			1028 #(#'_oid' #convertIntegerArrayFrom:length:description:)
-			"geometric"
-			600 #(point #convertPointFrom:length:description:)
-			601 #(lseg #convertLineSegmentFrom:length:description:)
-			602 #(path #convertPathFrom:length:description:)
-			603 #(box #convertBoxFrom:length:description:)
-			604 #(polygon #convertPolygonFrom:length:description:)
-			628 #(line #convertLineFrom:length:description:)
-			718 #(circle #convertCircleFrom:length:description:)
-			"vectors"
-			30 #( oidvector #convertIntegerVectorFrom:length:description: )
-		)
+P3Converter class >> postgresIntervalStyleTypeOids [
+	"The type OIDs whose text I read in the 'postgres' output format: interval.
+	See P3Converter>>#intervalStyle:."
+
+	^ #( 1186 )
+]
+
+{ #category : 'accessing' }
+P3Converter class >> supportedTypes [
+	"Return the list of PostgreSQL internal type names that we can convert to objects."
+	
+	^ P3TypeMap standard supportedTypes
 ]
 
 { #category : 'input/output' }
@@ -101,15 +71,62 @@ P3Converter >> asciiStreamFor: bytes length: length [
 ]
 
 { #category : 'converting' }
+P3Converter >> byteArrayFromEscapeFormat: text [
+	"Read the bytea text of bytea_output = escape: printable bytes as they are, a backslash as two of
+	them, any other byte as a backslash and three octal digits."
+
+	| in |
+	in := text readStream.
+	^ ByteArray streamContents: [ :out |
+		[ in atEnd ] whileFalse: [ | byte |
+			byte := in next.
+			byte = 92
+				ifFalse: [ out nextPut: byte ]
+				ifTrue: [
+					in peek = 92
+						ifTrue: [ out nextPut: in next ]
+						ifFalse: [ out nextPut: (self octalValueOf: (in next: 3)) ] ] ] ]
+]
+
+{ #category : 'accessing' }
+P3Converter >> clientEncoding: aString [
+	"Read values with the encoding the server says it is sending. An encoding I have no encoder for
+	leaves the current one in place: the values will then fail to decode, which is better than
+	decoding them under a name I cannot honour."
+
+	[ self encoder: (ZnCharacterEncoder newForEncoding: aString) ]
+		on: Error
+		do: [ :error | error return ]
+]
+
+{ #category : 'converting' }
 P3Converter >> convert: bytes length: length description: description [
-	^ map 
-		at: description typeOid 
-		ifPresent: [ :type | | lambda |
-			lambda := type second.
-	 		lambda isSymbol 
-				ifTrue: [ self perform: lambda with: bytes with: length with: description ]
-				ifFalse: [ lambda value: bytes value: length value: description ] ]
-		ifAbsent: [ (P3Error cannotConvertTypeOid: description typeOid) signal ]
+	| converter |
+	converter := (map mappingAt: description typeOid ifAbsent: [ nil ])
+		ifNil: [ unknownTypeConverter ifNil: [ ^ (P3Error cannotConvertTypeOid: description typeOid) signal ] ]
+		ifNotNil: [ :mapping | mapping converter ].
+	^ converter isSymbol
+		ifTrue: [ self perform: converter with: bytes with: length with: description ]
+		ifFalse: [ converter value: bytes value: length value: description ]
+]
+
+{ #category : 'converting-arrays' }
+P3Converter >> convertArrayFrom: bytes length: length description: description [
+	"Read an array whose element type has its own converter. Each element text is converted
+	as if the server had sent it as a column of the element type."
+
+	| input elementDescription |
+	elementDescription := P3RowFieldDescription new
+		typeOid: (map mappingAt: description typeOid ifAbsent: [ self error: 'Not an array type' ]) elementOid;
+		yourself.
+	input := ZnLimitedReadStream on: bytes limit: length.
+	input := ZnCharacterReadStream on: input encoding: self encoder.
+	^ P3ArrayValueParser new
+		on: input;
+		converter: [ :string | | encoded |
+			encoded := self encoder encodeString: string.
+			self convert: encoded readStream length: encoded size description: elementDescription ];
+		next
 ]
 
 { #category : 'converting' }
@@ -141,16 +158,39 @@ P3Converter >> convertBoxFrom: bytes length: length description: description [
 
 { #category : 'converting' }
 P3Converter >> convertByteArrayFrom: bytes length: length description: description [
-	| size byteArray digitValues |
-	self assert: (bytes next: 2) = #[92 120]. "\x"
+	"The text of a bytea is \x followed by hex digits when bytea_output is hex, the default, and the
+	escape format otherwise. The server does not report that setting, but the formats cannot be
+	confused: the escape format writes a backslash only as two of them or as three octal digits."
+
+	| head size byteArray digitValues |
+	length < 2 ifTrue: [ ^ self byteArrayFromEscapeFormat: (bytes next: length) ].
+	head := bytes next: 2.
+	head = #[92 120] "\x"
+		ifFalse: [ ^ self byteArrayFromEscapeFormat: head , (bytes next: length - 2) ].
 	size := (length - 2) // 2.
-	digitValues := #(-1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 4 5 6 7 8 9 -1 -1 -1 -1 -1 -1 -1 10 11 12 13 14 15 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 10 11 12 13 14 15 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1).
+	digitValues := #(-1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 4 5 6 7 8 9 -1 -1 -1 -1 -1 -1 -1 10 11 12 13 14 15 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 10 11 12 13 14 15 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1).
 	byteArray := ByteArray new: size.
 	1 to: size do: [ :index | | value |
 		value := digitValues at: bytes next + 1.
 		value := (value bitShift: 4) + (digitValues at: bytes next + 1).
 		byteArray at: index put: value ].
 	^ byteArray 
+]
+
+{ #category : 'converting' }
+P3Converter >> convertCharacterFrom: bytes length: length description: description [
+	"The internal single-byte type char of PostgreSQL (OID 18), not to be confused with bpchar and
+	varchar (which read as String) or one encoded character of text. The server writes the zero
+	byte as an empty text, and from PostgreSQL 15 a byte with the high bit set as a backslash and
+	three octal digits."
+
+	| text |
+	length = 0 ifTrue: [ ^ Character value: 0 ].
+	length = 1 ifTrue: [ ^ Character value: bytes next ].
+	text := bytes next: length.
+	^ (length = 4 and: [ text first = 92 ])
+		ifTrue: [ Character value: (self octalValueOf: text allButFirst) ]
+		ifFalse: [ (P3Error unreadableValue: 'char' text: text asString) signal ]
 ]
 
 { #category : 'converting-geometric' }
@@ -167,7 +207,7 @@ P3Converter >> convertDateAndTimeFrom: bytes length: length description: descrip
 			parseDateAndTime
 ]
 
-{ #category : 'converting-chronology' }
+{ #category : 'converting' }
 P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length description: description [
 	"TIMESTAMP WITHOUT TIME ZONE (TIMESTAMP) is stored internally in Postgres the way it was inserted, its representation remains constant, with no offset added. We use the timezone of the connection to do the necessary shifting. This assumes that the timezones used during insert/update and query are the same. For this to work, the connection output format must be ISO, the default."
 
@@ -175,7 +215,7 @@ P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length descr
 	timestamp := (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length))
 							timestampClass: timestampClass;
 							parseDateAndTime.
-	offset := self timezone offsetForTimestamp: timestamp.
+	offset := self sessionTimezone offsetForTimestamp: timestamp.
 	^ offset isZero
 		ifTrue: [ timestamp ]
 		ifFalse: [ timestamp translateTo: offset ]
@@ -183,7 +223,8 @@ P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length descr
 
 { #category : 'converting-chronology' }
 P3Converter >> convertDateFrom: bytes length: length description: description [
-	"For this to work, the connection output format must be ISO, the default"
+	"For this to work, the connection output format must be ISO, the default.
+	See P3Converter>>#dateStyle:, which maps me away when it is not."
 	
 	^ (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseDate
 ]
@@ -193,20 +234,20 @@ P3Converter >> convertFixedBitStringFrom: bytes length: length description: desc
 	^ P3FixedBitString readFrom: (self asciiStreamFor: bytes length: length)
 ]
 
-{ #category : 'converting-arrays' }
+{ #category : 'converting' }
 P3Converter >> convertFloatArrayFrom: bytes length: length description: description [
 	| input |
 	input := ZnLimitedReadStream on: bytes limit: length.
 	input := ZnCharacterReadStream on: input encoding: self encoder. 
 	^ P3ArrayValueParser new 
 		on: input;
-		converter: [ :string | Float readFrom: string ];
+		converter: [ :string | self floatFrom: string ];
 		next
 ]
 
 { #category : 'converting' }
 P3Converter >> convertFloatFrom: bytes length: length description: description [
-	^ Float readFrom: (self asciiStreamFor: bytes length: length)
+	^ self floatFrom: (self asciiStreamFor: bytes length: length) upToEnd
 ]
 
 { #category : 'converting-arrays' }
@@ -237,6 +278,9 @@ P3Converter >> convertIntegerVectorFrom: bytes length: length description: descr
 
 { #category : 'converting-chronology' }
 P3Converter >> convertIntervalFrom: bytes length: length description: description [
+	"For this to work, the connection output format must be postgres, the default.
+	See P3Converter>>#intervalStyle:, which maps me away when it is not."
+
 	^ P3Interval readFrom: (self asciiStreamFor: bytes length: length)
 ]
 
@@ -278,7 +322,7 @@ P3Converter >> convertPolygonFrom: bytes length: length description: description
 
 { #category : 'converting' }
 P3Converter >> convertScaledDecimalFrom: bytes length: length description: description [
-	^ ScaledDecimal readFrom: (self asciiStreamFor: bytes length: length)
+	^ self scaledDecimalFrom: (self asciiStreamFor: bytes length: length) upToEnd
 ]
 
 { #category : 'converting-arrays' }
@@ -317,26 +361,30 @@ P3Converter >> convertTimeFrom: bytes length: length description: description [
 	^ (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTime
 ]
 
-{ #category : 'converting-chronology' }
+{ #category : 'converting' }
 P3Converter >> convertTimeWithTimezoneFrom: bytes length: length description: description [
 	"TIME WITH TIME ZONE corresponds to Time plus an offset. 
 	Time does not hold a time zone nor an offset.
 	We compare the offset coming in with the offset for that time today 
 	in our connection's timezone, if they differ we correct to compensate.
+	The correction is made in nanoseconds: Time arithmetic works in whole seconds and would drop
+	the fraction of a second.
 	For this to work, the connection output format must be ISO, the default"
 
-	| parser time offset connectionOffset translatedTime |
-	parser := P3ISO8601Parser on: (self asciiStreamFor: bytes length: length).
-	time := parser parseTime.
-	offset := parser parseOptionalTimezoneOffset seconds.
-	connectionOffset := self timezone offsetForTimestamp: (ZTimestamp today + time).
-	^ offset = connectionOffset 
-		ifTrue: [ time ]
-		ifFalse: [ 
-			translatedTime := time subtractTime: (offset - connectionOffset).
-			^ translatedTime seconds < 0 
-				ifTrue: [ translatedTime addSeconds: 24 * 60 * 60 ]
-				ifFalse: [ translatedTime ] ]
+	| timeAndOffset time offset connectionOffset nanoSecondsPerDay shifted seconds |
+	timeAndOffset := (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTimeWithOffset.
+	time := timeAndOffset first.
+	offset := timeAndOffset second.
+	connectionOffset := self sessionTimezone offsetForTimestamp: (ZTimestamp today + time).
+	offset = connectionOffset ifTrue: [ ^ time ].
+	nanoSecondsPerDay := 86400 * 1000000000.
+	shifted := ((time asSeconds * 1000000000) + time nanoSecond - (offset - connectionOffset) asNanoSeconds) \\ nanoSecondsPerDay.
+	seconds := shifted // 1000000000.
+	^ Time
+		hour: seconds // 3600
+		minute: seconds // 60 \\ 60
+		second: seconds \\ 60
+		nanoSecond: shifted \\ 1000000000
 ]
 
 { #category : 'converting-special' }
@@ -349,6 +397,21 @@ P3Converter >> convertUuidFrom: bytes length: length description: description [
 P3Converter >> convertVoidFrom: bytes length: length description: description [
 	self assert: length = 0.
 	^ nil
+]
+
+{ #category : 'accessing' }
+P3Converter >> dateStyle: aString [
+	"The session's DateStyle. I read dates and timestamps as ISO 8601, which only DateStyle ISO produces.
+	Under another style the same text is a different date and P3ISO8601Parser cannot tell: Postgres style
+	prints 0031-01-01 as 01-01-0031, which is valid ISO for 0001-01-31. So the style decides what the
+	chronology OIDs map to, the parser or a converter that refuses, and reading a value costs nothing."
+
+	dateStyle := aString.
+	self
+		installConvertersFor: self class isoDateStyleTypeOids
+		refusing: (self usesISODateStyle
+			ifTrue: [ nil ]
+			ifFalse: [ [ :bytes :length :description | (P3Error unsupportedDateStyle: dateStyle) signal ] ])
 ]
 
 { #category : 'input/output' }
@@ -369,6 +432,48 @@ P3Converter >> encoder: anObject [
 	encoder := anObject
 ]
 
+{ #category : 'private' }
+P3Converter >> floatDigitsFrom: stream [
+	"The decimal digits at the current position, possibly none."
+
+	^ String streamContents: [ :out |
+		[ stream atEnd not and: [ stream peek isDigit ] ] whileTrue: [ out nextPut: stream next ] ]
+]
+
+{ #category : 'converting' }
+P3Converter >> floatFrom: aString [
+	"Read the text of a float4 or float8, as the server writes it: digits with an optional fraction and
+	an optional exponent with its own sign (1e+100, -1.5e-07), or NaN, Infinity and -Infinity.
+	The value is the exact decimal fraction rounded once to a double, so every double that the server
+	prints with the digits that identify it is read back as the same double. A negative zero keeps its sign."
+
+	| text stream negative wholeDigits fractionDigits mantissa exponent exponentDigits exponentNegative value |
+	text := aString trimmed.
+	text = 'NaN' ifTrue: [ ^ Float nan ].
+	(text = 'Infinity' or: [ text = '+Infinity' ]) ifTrue: [ ^ Float infinity ].
+	text = '-Infinity' ifTrue: [ ^ Float infinity negated ].
+	stream := text readStream.
+	negative := stream peekFor: $-.
+	negative ifFalse: [ stream peekFor: $+ ].
+	wholeDigits := self floatDigitsFrom: stream.
+	fractionDigits := (stream peekFor: $.)
+		ifTrue: [ self floatDigitsFrom: stream ]
+		ifFalse: [ '' ].
+	(wholeDigits isEmpty and: [ fractionDigits isEmpty ]) ifTrue: [ ^ (P3Error parsingFailed: aString) signal ].
+	exponent := 0.
+	((stream peekFor: $e) or: [ stream peekFor: $E ]) ifTrue: [
+		exponentNegative := stream peekFor: $-.
+		exponentNegative ifFalse: [ stream peekFor: $+ ].
+		exponentDigits := self floatDigitsFrom: stream.
+		exponentDigits isEmpty ifTrue: [ ^ (P3Error parsingFailed: aString) signal ].
+		exponent := exponentNegative ifTrue: [ exponentDigits asInteger negated ] ifFalse: [ exponentDigits asInteger ] ].
+	stream atEnd ifFalse: [ ^ (P3Error parsingFailed: aString) signal ].
+	mantissa := (wholeDigits , fractionDigits) asInteger.
+	mantissa = 0 ifTrue: [ ^ negative ifTrue: [ Float negativeZero ] ifFalse: [ 0.0 ] ].
+	value := (mantissa * (10 raisedTo: exponent - fractionDigits size)) asFloat.
+	^ negative ifTrue: [ value negated ] ifFalse: [ value ]
+]
+
 { #category : 'initialize' }
 P3Converter >> initialize [
 	super initialize.
@@ -379,30 +484,86 @@ P3Converter >> initialize [
 	self initializeTypeMap
 ]
 
-{ #category : 'initialize' }
+{ #category : 'initialization' }
 P3Converter >> initializeFrom: properties [
-	| serverTimezone serverEncoder |
-	"Try to resolve the session/connection timezone"
-	serverTimezone := properties at: 'TimeZone' ifAbsent: [ 'GMT' ].
-	"The fallback for unknown timezones is normally GMT but can be overwritten with ZCurrentTimezone."
-	serverTimezone := [ ZTimezone id: serverTimezone ] on: Error do: [ ZCurrentTimezone value ].
-	self timezone: serverTimezone.
-	"Try to resolve the session/connection character encoder/decoder"
-	serverEncoder := properties at: 'client_encoding' ifAbsent: [ 'UTF8' ].
-	"The fallback for unknown encodings is normally UTF8 but can be overwritten ZnDefaultCharacterEncoder."
-	serverEncoder := ZnCharacterEncoder newForEncoding: serverEncoder.
-	self encoder: serverEncoder
+	"Resolve the session/connection time zone, see #serverTimezone:"
+
+	self serverTimezone: (properties at: 'TimeZone' ifAbsent: [ 'GMT' ]).
+	"The character encoder/decoder, as when the server reports a change: a name that I have no encoder for
+	leaves UTF-8 in place and does not fail the connect."
+	self clientEncoding: (properties at: 'client_encoding' ifAbsent: [ 'UTF8' ]).
+	"The output styles I can read. A missing one means the server did not report it, so assume its default."
+	self dateStyle: (properties at: 'DateStyle' ifAbsent: [ nil ]).
+	self intervalStyle: (properties at: 'IntervalStyle' ifAbsent: [ nil ])
 ]
 
 { #category : 'initialize' }
 P3Converter >> initializeTypeMap [
-	map := self class typeMap
+	"My own extension of the standard map: #mapOid:type:to: and the session's output styles change it."
+
+	map := P3TypeMap standard extension
+]
+
+{ #category : 'private' }
+P3Converter >> installConvertersFor: typeOids refusing: aBlockOrNil [
+	"Point typeOids at their standard converters, or at aBlockOrNil when that is not nil. The session's
+	output styles decide which, and they only change when the server reports a change, so the decision is
+	made here instead of on every value read. A caller that installed its own converter for one of these
+	OIDs loses it when a style changes."
+
+	typeOids do: [ :oid |
+		aBlockOrNil
+			ifNil: [ map restoreOid: oid ]
+			ifNotNil: [ map
+				mapOid: oid
+				type: (P3TypeMap standard nameAt: oid ifAbsent: [ oid ])
+				to: aBlockOrNil ] ]
+]
+
+{ #category : 'accessing' }
+P3Converter >> intervalStyle: aString [
+	"The session's IntervalStyle. P3Interval reads the 'postgres' format; the other styles drop or move
+	components, so the style decides whether the interval OID maps to P3Interval or to a converter that
+	refuses. See #dateStyle: for why this is decided here."
+
+	intervalStyle := aString.
+	self
+		installConvertersFor: self class postgresIntervalStyleTypeOids
+		refusing: (self usesPostgresIntervalStyle
+			ifTrue: [ nil ]
+			ifFalse: [ [ :bytes :length :description | (P3Error unsupportedIntervalStyle: intervalStyle) signal ] ])
+]
+
+{ #category : 'accessing' }
+P3Converter >> mapArrayOid: anArrayOid type: aTypeName elementOid: anElementOid [
+	^ map mapArrayOid: anArrayOid type: aTypeName elementOid: anElementOid
 ]
 
 { #category : 'accessing' }
 P3Converter >> mapOid: anOoid type: aTypename to: aBlockOrSymbol [
+	^ map mapOid: anOoid type: aTypename to: aBlockOrSymbol
+]
 
-	^ map at: anOoid put: { aTypename . aBlockOrSymbol }	
+{ #category : 'accessing' }
+P3Converter >> noteSessionParameter: key value: value [
+	"React to a server parameter that decides how I read values. Values arrive as text, so these four
+	change what that text means, and the server reports each change as a ParameterStatus message.
+	Anything else I do not care about."
+
+	key = 'client_encoding' ifTrue: [ ^ self clientEncoding: value ].
+	key = 'TimeZone' ifTrue: [ ^ self serverTimezone: value ].
+	key = 'DateStyle' ifTrue: [ ^ self dateStyle: value ].
+	key = 'IntervalStyle' ifTrue: [ ^ self intervalStyle: value ]
+]
+
+{ #category : 'converting' }
+P3Converter >> octalValueOf: threeDigitBytes [
+	"The value of three ASCII octal digits, like the 200 of a backslash and 200."
+
+	^ threeDigitBytes inject: 0 into: [ :sum :digit |
+		(digit between: 48 and: 55) ifFalse: [
+			(P3Error unreadableValue: 'octal escape' text: threeDigitBytes asString) signal ].
+		sum * 8 + (digit - 48) ]
 ]
 
 { #category : 'printing' }
@@ -413,6 +574,50 @@ P3Converter >> printOn: stream [
 	stream space.
 	self timezone ifNotNil: [ :tmz | stream print: tmz id ].
 	stream nextPut: $)
+]
+
+{ #category : 'converting' }
+P3Converter >> scaledDecimalFrom: aString [
+	"Read the text of a numeric as a ScaledDecimal. NaN, Infinity and -Infinity are numeric values
+	that a ScaledDecimal, being a fraction, cannot hold: reading one signals a P3Error."
+
+	| text |
+	text := aString trimmed.
+	(text = 'NaN' or: [ text = 'Infinity' or: [ text = '-Infinity' ] ])
+		ifTrue: [ ^ (P3Error cannotRepresentNumeric: text) signal ].
+	^ ScaledDecimal readFrom: text readStream
+]
+
+{ #category : 'initialization' }
+P3Converter >> serverTimezone: aString [
+	"Shift times without a zone using the session's zone. A name that I cannot resolve, like a POSIX
+	style UTC+3, is remembered: guessing a zone would shift values by the wrong offset, so reading a
+	value that needs the zone signals instead, see #sessionTimezone."
+
+	timezone := [ ZTimezone id: aString ] on: Error do: [ nil ].
+	unknownTimezoneName := timezone ifNil: [ aString ]
+]
+
+{ #category : 'accessing' }
+P3Converter >> sessionTimezone [
+	"The zone of the session. Signal when the server reported a name that I cannot resolve."
+
+	^ timezone ifNil: [ (P3Error unknownTimezone: unknownTimezoneName) signal ]
+]
+
+{ #category : 'input/output' }
+P3Converter >> textCStringFrom: binaryStream [
+	"Read a zero terminated string in the connection encoding. Text that is not valid in it is read as
+	Latin-1 instead: this is used for error messages, and an error must never be lost because of how
+	it is spelled."
+
+	| bytes |
+	bytes := ByteArray streamContents: [ :out |
+		| byte |
+		[ (byte := binaryStream next) = 0 ] whileFalse: [ out nextPut: byte ] ].
+	^ [ self encoder decodeBytes: bytes ]
+		on: Error
+		do: [ :error | error return: (String streamContents: [ :out | bytes do: [ :each | out nextPut: each asCharacter ] ]) ]
 ]
 
 { #category : 'accessing' }
@@ -432,5 +637,42 @@ P3Converter >> timezone [
 
 { #category : 'accessing' }
 P3Converter >> timezone: anObject [
-	timezone := anObject
+	timezone := anObject.
+	unknownTimezoneName := nil
+]
+
+{ #category : 'accessing' }
+P3Converter >> timezoneName [
+	"The name of the session zone, also when I cannot resolve it."
+
+	^ timezone ifNil: [ unknownTimezoneName ] ifNotNil: [ :zone | zone id ]
+]
+
+{ #category : 'accessing' }
+P3Converter >> typeMap [
+	^ map
+]
+
+{ #category : 'accessing' }
+P3Converter >> unknownTypeConverter: aSelectorBlockOrNil [
+	"Read the values of a type without a converter with aSelectorBlockOrNil, a selector or a block like
+	the ones of #mapOid:type:to:. Without one, which is the default, such a value signals a P3Error."
+
+	unknownTypeConverter := aSelectorBlockOrNil
+]
+
+{ #category : 'testing' }
+P3Converter >> usesISODateStyle [
+	"DateStyle ISO is the only one whose date and timestamp text is ISO 8601. Nil means nobody told me a
+	style, so assume the server default, which is ISO."
+
+	^ dateStyle isNil or: [ dateStyle beginsWith: 'ISO' ]
+]
+
+{ #category : 'testing' }
+P3Converter >> usesPostgresIntervalStyle [
+	"'postgres' is the interval output format P3Interval reads. Nil means nobody told me a style, so assume
+	the server default, which is postgres."
+
+	^ intervalStyle isNil or: [ intervalStyle = 'postgres' ]
 ]

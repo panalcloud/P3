@@ -36,10 +36,9 @@ The computation of the saltedPasssword takes a noticeable amount of time,
 especially with SHA-256 and the conventional 4096 iterations.
 For this reason this computation is cached.
 
-Furthermore, to save time between usages, clients can store my instances
-in my store, under a key, so they can reuse them, potentially gaining
-speed by using a cached result. See P3SCRAM class>>#storeAt:ifAbsentPut:
-This speedup is for all but the first execution of a particular authentication.
+Furthermore, my class side store keeps the saltedPassword for one hour, under a key made of the
+algorithm, a hash of the password, the salt and the iterations. An instance holds the nonces
+and the challenge of one handshake, so use a new instance for each login.
 
 Security note
 
@@ -119,20 +118,9 @@ P3SCRAM class >> shutDown [
 
 { #category : 'accessing' }
 P3SCRAM class >> store [
-	"I maintain a store with instances registered under a key, using a TTLCache of 1 hour"
-	
+	"I maintain a store of salted passwords, using a TTLCache of 1 hour"
+
 	^ Store ifNil: [ Store := TTLCache new timeToLive: 1 hour; yourself ]
-]
-
-{ #category : 'accessing' }
-P3SCRAM class >> storeAt: key ifAbsentPut: block [
-	"If my store holds a previously registered and used instance, return it,
-	else evaluate block, which should return a newly created instance, that I store and return.
-	Used instances cache their saltedPassword for improved performance for 1 hour."
-
-	^ self store 
-		at: key 
-		ifAbsentPut: block
 ]
 
 { #category : 'private' }
@@ -257,13 +245,22 @@ P3SCRAM >> salt: byteArray [
 
 { #category : 'private' }
 P3SCRAM >> saltedPassword [
-	"Cached to improve performance"
-	
-	^ saltedPassword ifNil: [ 
-			saltedPassword := iteratedHash 
-				password: self password utf8Encoded; 
-				salt: self salt; 
-				deriveKey ]
+	"The derivation is slow, so it is cached in my class side store. The key holds the algorithm, a hash of the
+	password, the salt and the iterations: a different value of any of them never finds an old result."
+
+	^ saltedPassword ifNil: [
+		saltedPassword := self class store
+			at: self saltedPasswordKey
+			ifAbsentPut: [
+				iteratedHash
+					password: self password utf8Encoded;
+					salt: self salt;
+					deriveKey ] ]
+]
+
+{ #category : 'private' }
+P3SCRAM >> saltedPasswordKey [
+	^ { hash class name. (SHA256 hashMessage: self password utf8Encoded) hex. self salt. self iterations }
 ]
 
 { #category : 'public' }

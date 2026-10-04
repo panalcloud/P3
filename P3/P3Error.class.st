@@ -191,6 +191,15 @@ P3Error class >> unexpectedMessageDuringStartup [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> unknownTimezone: zoneName [
+	"The session time zone has a name that I cannot resolve, so a time without a zone cannot be placed."
+
+	^ self new
+		info: { $C->'P3039'. $M->('Cannot read a time without a zone: the server time zone "{1}" is unknown, use a named zone with SET TIME ZONE' format: { zoneName }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> unsupportedAuthenticationType: type [
 	^ self new 

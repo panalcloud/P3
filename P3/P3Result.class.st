@@ -102,9 +102,9 @@ P3Result >> firstFieldOfFirstRecord [
 
 { #category : 'accessing' }
 P3Result >> firstRecord [
-	"Return the first record of the result, which will be an Array"
+	"Return the first record of the result, which will be an Array. Answer nil when there are no records."
 	
-	^ self hasData ifTrue: [ self records first ] ifFalse: [ nil ]
+	^ self hasData ifTrue: [ self records ifNotEmpty: [ :records | records first ] ifEmpty: [ nil ] ] ifFalse: [ nil ]
 ]
 
 { #category : 'accessing' }
@@ -251,9 +251,10 @@ P3Result >> rowCount [
 
 { #category : 'private' }
 P3Result >> rowCountFromCommandResultTag: string [
+	"Answer the row count at the end of a command tag. Tags without a count, like CREATE TABLE or BEGIN, answer 0."
 
 	string ifEmpty: [ ^ 0 ].
-	^ ($ split: string) last asInteger
+	^ ($  split: string) last asInteger ifNil: [ 0 ]
 ]
 
 { #category : 'convenience' }

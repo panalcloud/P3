@@ -97,6 +97,13 @@ Class {
 	#tag : 'Core'
 }
 
+{ #category : 'accessing' }
+P3Client class >> defaultApplicationName [
+	"The name of this Pharo, major and minor version."
+
+	^ 'Pharo {1}.{2}' format: { SystemVersion current major. SystemVersion current minor }
+]
+
 { #category : 'instance creation' }
 P3Client class >> url: anUrl [
 	^ self new url: anUrl 
@@ -120,6 +127,21 @@ P3Client >> abandonCopyIn [
 			yourself) asBytes
 		tag: $f.
 	extendedRequest ifTrue: [ self writeMessage: #[] tag: $S ]
+]
+
+{ #category : 'accessing' }
+P3Client >> applicationName [
+	"The application_name the server shows in pg_stat_activity and its logs. Defaults to the Pharo
+	version, like Pharo 13.1. Nil sends none."
+
+	^ settings at: #applicationName ifAbsent: [ self class defaultApplicationName ]
+]
+
+{ #category : 'accessing' }
+P3Client >> applicationName: aStringOrNil [
+	"Set the application_name sent with the startup, so it holds for connections opened after this call."
+
+	settings at: #applicationName put: aStringOrNil
 ]
 
 { #category : 'private' }
@@ -768,16 +790,15 @@ P3Client >> isSSL [
 
 { #category : 'testing' }
 P3Client >> isServerVersionAtLeastMajor: major minor: minor [
-	"Return true when the server version if at least major.minor, false otherwise"
+	"Return true when the server version if at least major.minor, false otherwise. Elements that are not
+	numbers, like the 18beta1 of a pre-release, read as their leading digits, and a missing minor as 0."
 	
-	| serverVersion |
-	serverVersion := ($. split: self serverVersion) collect: [ :each |
-		"try to be robust for non-numeric version elements"
-		Number readFrom: each ifFail: [ nil ] ].
-	^ serverVersion first > major
-			or: [ 
-				serverVersion first = major 
-					and: [ serverVersion second >= minor ] ]
+	| numbers |
+	numbers := ($. split: self serverVersion) collect: [ :each |
+		Integer readFrom: each ifFail: [ 0 ] ].
+	^ numbers first > major
+		or: [ numbers first = major
+			and: [ (numbers at: 2 ifAbsent: [ 0 ]) >= minor ] ]
 ]
 
 { #category : 'testing' }
@@ -795,7 +816,7 @@ P3Client >> isUnknownTypesAsTextEnabled [
 
 { #category : 'testing' }
 P3Client >> isUsingUnixSocket [
-	"Following the PostgreSQL convention a host starting with a / is a path to a Unix Socket"
+	"Following the PostgreSQL convention a host starting with a / is a Unix Socket directory, see #unixSocketFile"
 	
 	^ self host notNil and: [ self host first = $/ ]
 ]
@@ -971,7 +992,7 @@ P3Client >> newSocketStream [
 
 	| stream |
 	stream := self isUsingUnixSocket
-		ifTrue: [ ZdcSocketStream on: (ZnNetworkingUtils default unixSocketOnFile: self host asFileReference) ]
+		ifTrue: [ ZdcSocketStream on: (ZnNetworkingUtils default unixSocketOnFile: self unixSocketFile) ]
 		ifFalse: [ self newTcpSocketStream ].
 	stream timeout: self timeout.
 	^ stream
@@ -1235,7 +1256,7 @@ P3Client >> processParameterDescription: payload [
 	^ Array new: count streamContents: [ :out |
 			count timesRepeat: [ 
 				out nextPut: (P3ParameterDescription new
-					typeOid: payload int32;
+					typeOid: payload uint32;
 					yourself) ] ]
 ]
 
@@ -1263,9 +1284,9 @@ P3Client >> processRowDescription: payload [
 				out nextPut: (P3RowFieldDescription new
 					fieldName: (self converter encodedCStringFrom: payload);
 					tableOid: payload uint32;
-					attributeNumber: payload uint16;
+					attributeNumber: payload int16;
 					typeOid: payload uint32;
-					typeSize: payload uint16;
+					typeSize: payload int16;
 					typeModifier: payload int32;
 					format: payload uint16;
 					yourself) ] ]
@@ -1532,12 +1553,18 @@ P3Client >> runCloseStatementNamed: aName [
 P3Client >> runExtendedQueryResult: descriptions [
 	"Read one result of an extended-query response, starting at the message I am positioned on:
 	BindComplete, then the DataRows up to the CommandComplete ($C) or PortalSuspended ($s) that ends
-	them."
+	them. An EmptyQueryResponse ($I) replaces all of that for a query that contained no statement."
 
 	| rows result |
 	message tag = $2
 		ifFalse: [ ^ P3Error bindCompleteExpected signal ].
 	self readMessage.
+	message tag = $I
+		ifTrue: [
+			result := P3Result new addResult: ''; yourself.
+			result source: (properties at: #sql_source ifAbsent: nil).
+			self logResult: result.
+			^ result ].
 	rows := self readDataRows: descriptions.
 	('Cs' includes: message tag)
 		ifFalse: [ ^ self rejectUnexpectedMessage ].
@@ -1685,7 +1712,7 @@ P3Client >> serverTimezone [
 	ALTER DATABASE <mydb> SET timezone TO 'UTC' "
 	
 	self ensureConnected.
-	^ self converter timezone id
+	^ self converter timezoneName
 ]
 
 { #category : 'accessing' }
@@ -1750,8 +1777,10 @@ P3Client >> sslRequestMessage [
 { #category : 'private messages' }
 P3Client >> startupMessage [
 	"The client_encoding is requested, whatever the role or the database default is, because I decode
-	what the server sends as UTF-8 until it reports another encoding. An application that wants another
-	one can say so in the options."
+	what the server sends as UTF-8 until it reports another encoding. DateStyle and IntervalStyle are
+	requested because the converter reads only the ISO and postgres styles, and extra_float_digits
+	because servers before 12 round floats without it. An application that wants others can say so in
+	the options."
 
 	^ ByteArray streamContents: [ :out |
 			out nextPutAll: #[ 0 3 0 0 ]. "Protocol major.minor 3.0"
@@ -1760,8 +1789,11 @@ P3Client >> startupMessage [
 			self database ifNotNil: [ 
 				out nextPutAll: (self asCString: 'database').
 				out nextPutAll: (self asCString: self database) ].
-			out nextPutAll: (self asCString: 'client_encoding').
-			out nextPutAll: (self asCString: 'UTF8').
+			#( 'client_encoding' 'UTF8' 'DateStyle' 'ISO' 'IntervalStyle' 'postgres' 'extra_float_digits' '3' )
+				do: [ :each | out nextPutAll: (self asCString: each) ].
+			self applicationName ifNotNil: [ :name |
+				out nextPutAll: (self asCString: 'application_name').
+				out nextPutAll: (self asCString: name) ].
 			self startupOptions ifNotNil: [
 				out nextPutAll: (self asCString: 'options').
 				out nextPutAll: (self asCString: self startupOptions) ].
@@ -1854,6 +1886,18 @@ P3Client >> transactionStatus [
 	response has been read."
 
 	^ transactionStatus
+]
+
+{ #category : 'private' }
+P3Client >> unixSocketFile [
+	"Following the PostgreSQL convention a host that is a directory holds the socket file
+	.s.PGSQL.<port>. A host that is not a directory names the socket file itself."
+
+	| file |
+	file := self host asFileReference.
+	^ file isDirectory
+		ifTrue: [ file / ('.s.PGSQL.' , self port asString) ]
+		ifFalse: [ file ]
 ]
 
 { #category : 'private' }

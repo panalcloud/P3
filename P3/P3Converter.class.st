@@ -454,17 +454,15 @@ P3Converter >> initialize [
 
 { #category : 'initialize' }
 P3Converter >> initializeFrom: properties [
-	| serverTimezone serverEncoder |
+	| serverTimezone |
 	"Try to resolve the session/connection timezone"
 	serverTimezone := properties at: 'TimeZone' ifAbsent: [ 'GMT' ].
 	"The fallback for unknown timezones is normally GMT but can be overwritten with ZCurrentTimezone."
 	serverTimezone := [ ZTimezone id: serverTimezone ] on: Error do: [ ZCurrentTimezone value ].
 	self timezone: serverTimezone.
-	"Try to resolve the session/connection character encoder/decoder"
-	serverEncoder := properties at: 'client_encoding' ifAbsent: [ 'UTF8' ].
-	"The fallback for unknown encodings is normally UTF8 but can be overwritten ZnDefaultCharacterEncoder."
-	serverEncoder := ZnCharacterEncoder newForEncoding: serverEncoder.
-	self encoder: serverEncoder.
+	"The character encoder/decoder, as when the server reports a change: a name that I have no encoder for
+	leaves UTF-8 in place and does not fail the connect."
+	self clientEncoding: (properties at: 'client_encoding' ifAbsent: [ 'UTF8' ]).
 	"The output styles I can read. A missing one means the server did not report it, so assume its default."
 	self dateStyle: (properties at: 'DateStyle' ifAbsent: [ nil ]).
 	self intervalStyle: (properties at: 'IntervalStyle' ifAbsent: [ nil ])
@@ -557,6 +555,21 @@ P3Converter >> serverTimezone: aString [
 	way #initializeFrom: does."
 
 	self timezone: ([ ZTimezone id: aString ] on: Error do: [ ZCurrentTimezone value ])
+]
+
+{ #category : 'input/output' }
+P3Converter >> textCStringFrom: binaryStream [
+	"Read a zero terminated string in the connection encoding. Text that is not valid in it is read as
+	Latin-1 instead: this is used for error messages, and an error must never be lost because of how
+	it is spelled."
+
+	| bytes |
+	bytes := ByteArray streamContents: [ :out |
+		| byte |
+		[ (byte := binaryStream next) = 0 ] whileFalse: [ out nextPut: byte ] ].
+	^ [ self encoder decodeBytes: bytes ]
+		on: Error
+		do: [ :error | error return: (String streamContents: [ :out | bytes do: [ :each | out nextPut: each asCharacter ] ]) ]
 ]
 
 { #category : 'accessing' }

@@ -41,7 +41,8 @@ Class {
 		'name',
 		'paramDescriptions',
 		'fieldDescriptions',
-		'source'
+		'source',
+		'generation'
 	],
 	#category : 'P3-Core',
 	#package : 'P3',
@@ -52,6 +53,15 @@ Class {
 P3PreparedStatement class >> newWith: aClient name: aString parameters: paramDescriptions fields: rowDescriptions [
 
 	^ self new initializeWith: aClient name: aString parameters: paramDescriptions fields: rowDescriptions
+]
+
+{ #category : 'private' }
+P3PreparedStatement >> adoptPreparationOf: aFreshStatement [
+	"Take over what the server described when it prepared my source again."
+
+	paramDescriptions := aFreshStatement paramDescriptions.
+	fieldDescriptions := aFreshStatement fieldDescriptions.
+	generation := aFreshStatement generation
 ]
 
 { #category : 'private' }
@@ -85,11 +95,13 @@ P3PreparedStatement >> bindMessageFor: inputValues [
 
 { #category : 'public' }
 P3PreparedStatement >> close [
-	"Close this query and release server side resources."
+	"Close this query and release server side resources.
+	When my server session is gone, so am I on the server: nothing is sent, and no connection is opened for it."
 
 	client ifNil: [ ^ self ].
 
-	client runCloseStatementNamed: name.
+	(client isConnected and: [ self isStale not ])
+		ifTrue: [ client runCloseStatementNamed: name ].
 
 	"This prepared statement can no longer be used."
 	client forgetPreparedStatementNamed: name.
@@ -140,13 +152,28 @@ P3PreparedStatement >> fieldDescriptions [
 	^ fieldDescriptions
 ]
 
+{ #category : 'accessing' }
+P3PreparedStatement >> generation [
+	"The connection generation of my client in which I was prepared on the server."
+
+	^ generation
+]
+
 { #category : 'initialization' }
 P3PreparedStatement >> initializeWith: aClient name: aString parameters: aParamDescriptions fields: aRowFieldDescriptions [
 
 	client := aClient.
 	name := aString.
 	paramDescriptions := aParamDescriptions.
-	fieldDescriptions := aRowFieldDescriptions
+	fieldDescriptions := aRowFieldDescriptions.
+	generation := aClient connectionGeneration
+]
+
+{ #category : 'private' }
+P3PreparedStatement >> isStale [
+	"Was I prepared in a server session that is gone? The server forgot me with it."
+
+	^ client notNil and: [ generation ~= client connectionGeneration ]
 ]
 
 { #category : 'accessing' }
@@ -193,10 +220,12 @@ P3PreparedStatement >> queryAll: inputRows [
 P3PreparedStatement >> runInputRows: inputRows [
 	"Execute me once per row of inputRows in a single request, and answer one P3Result per row.
 	The whole request is built before anything is written, so a row that cannot be bound leaves the
-	connection as it was instead of executing the rows before it."
+	connection as it was instead of executing the rows before it. If my server session was replaced,
+	I am prepared again first."
 
 	| messages |
 	client ifNil: [ ^ (P3Error statementClosed: name) signal ].
+	client prepareAgain: self.
 	client setSource: self source.
 	messages := Array streamContents: [ :out |
 		inputRows do: [ :each |

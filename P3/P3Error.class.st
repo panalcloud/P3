@@ -89,6 +89,15 @@ P3Error class >> commitReportedAs: resultTag [
 ]
 
 { #category : 'instance creation' }
+P3Error class >> connectionLost [
+	"See P3Client>>#autoReconnect: the connection went away and I am not to replace it by myself."
+
+	^ self new
+		info: { $C->'P3052'. $M->'Connection was lost and autoReconnect is off, reconnect explicitly to continue' } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
 P3Error class >> connectionLostInTransaction [
 	"See P3Client>>#closeAfterFailure: reconnecting would continue in autocommit what the caller
 	still believes is one transaction."

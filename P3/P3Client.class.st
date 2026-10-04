@@ -88,7 +88,9 @@ Class {
 		'pendingResponses',
 		'transactionLost',
 		'discardedError',
-		'extendedRequest'
+		'extendedRequest',
+		'connectionGeneration',
+		'connectionLost'
 	],
 	#category : 'P3-Core',
 	#package : 'P3',
@@ -128,12 +130,10 @@ P3Client >> applyUnknownTypesSetting [
 
 { #category : 'private' }
 P3Client >> asCString: string [
-	| bytes |
-	bytes := ByteArray new: string size + 1.
-	"implicit cheap ASCII conversion"
-	bytes replaceFrom: 1 to: string size with: string startingAt: 1. 
-	"last byte is 0"
-	^ bytes
+	"The bytes of string in UTF-8, ended by a zero byte. The user, database, password and options are
+	sent before the session has an encoding, and UTF-8 is the one that the startup packet asks for."
+
+	^ string utf8Encoded , #[0]
 ]
 
 { #category : 'private' }
@@ -163,6 +163,21 @@ P3Client >> authenticationTypes [
 		7 -> #GSS.
 		9 -> #SSPI.
 		10 -> #SASL } asDictionary
+]
+
+{ #category : 'accessing' }
+P3Client >> autoReconnect [
+	"Do I open a new connection by myself when the one I had was lost? Default true.
+	When false, the next request signals a P3Error and #connect is the explicit way back, as in libpq's PQreset."
+
+	^ settings at: #autoReconnect ifAbsent: [ true ]
+]
+
+{ #category : 'accessing' }
+P3Client >> autoReconnect: aBoolean [
+	"See #autoReconnect"
+
+	settings at: #autoReconnect put: aBoolean
 ]
 
 { #category : 'accessing' }
@@ -251,6 +266,7 @@ P3Client >> clearSession [
 	pendingResponses := 0.
 	transactionStatus := nil.
 	transactionLost := false.
+	connectionLost := false.
 	extendedRequest := false
 ]
 
@@ -282,13 +298,17 @@ P3Client >> closeAfterFailure [
 	A connection lost while a transaction was open or failed cannot simply be replaced: the server
 	rolled that transaction back, and the statements the caller still believes are inside it would run
 	in autocommit on a new connection, with its COMMIT succeeding on part of the work. Remember that,
-	so the next use says so instead of reconnecting silently. An explicit #close or #connect clears it."
+	so the next use says so instead of reconnecting silently. An explicit #close or #connect clears it.
+
+	Outside a transaction the connection is replaced on the next use, see #ensureConnected. Remember
+	that it was lost, to tell the application that the session state went with it."
 
 	| lost |
 	connection ifNil: [ ^ self ].
 	lost := 'TE' includes: (transactionStatus ifNil: [ $I ]).
 	self close.
-	transactionLost := lost
+	transactionLost := lost.
+	connectionLost := true
 ]
 
 { #category : 'private' }
@@ -333,7 +353,8 @@ P3Client >> connectInternal [
 		reset;
 		runAuthentication;
 		runStartup;
-		initializeConverter
+		initializeConverter.
+	connectionGeneration := connectionGeneration + 1
 ]
 
 { #category : 'public' }
@@ -369,6 +390,14 @@ P3Client >> connection [
 	When I am not connected, return nil."
 	
 	^ connection
+]
+
+{ #category : 'accessing' }
+P3Client >> connectionGeneration [
+	"How many connections I have opened. A server session lives as long as one generation:
+	what was prepared under an older one is gone."
+
+	^ connectionGeneration
 ]
 
 { #category : 'accessing' }
@@ -418,6 +447,23 @@ P3Client >> database: string [
 	Set to nil or do not set to use the default."
 	
 	settings at: #database put: string
+]
+
+{ #category : 'private' }
+P3Client >> defaultStatementNameFor: query [
+	"The server keeps at most 63 bytes of a statement name, in the connection encoding, and refuses a name
+	that is in use. A query that fits is its own name. A longer one is cut to whole characters and ends in
+	a digest of the entire query, so two queries that share their first 63 bytes still get different names."
+
+	| encoder digest prefix |
+	encoder := self converter encoder.
+	(encoder encodeString: query) size <= 63
+		ifTrue: [ ^ query ].
+	digest := (MD5 hashMessage: (encoder encodeString: query)) hex.
+	prefix := query.
+	[ (encoder encodeString: prefix) size + 1 + digest size > 63 ]
+		whileTrue: [ prefix := prefix allButLast ].
+	^ prefix , '_' , digest
 ]
 
 { #category : 'private' }
@@ -480,13 +526,22 @@ P3Client >> enableUnknownTypesAsText: aBoolean [
 { #category : 'private' }
 P3Client >> ensureConnected [
 	"Open my connection when it is not open. Refuse to reconnect after a connection was lost inside a
-	transaction, see #closeAfterFailure."
+	transaction, see #closeAfterFailure.
 
+	A connection that was open and went away on its own is replaced, unless autoReconnect is off: then
+	I signal and wait for an explicit #connect. A replacement is a new server session, so I signal
+	P3ConnectionReplaced after it is open. A first connect, or one after an explicit #close, is neither."
+
+	| replacing |
 	self isConnected ifTrue: [ ^ self ].
 	transactionLost ifTrue: [ ^ P3Error connectionLostInTransaction signal ].
+	replacing := connectionGeneration > 0 and: [ connectionLost or: [ connection notNil ] ].
+	(replacing and: [ self autoReconnect not ])
+		ifTrue: [ ^ P3Error connectionLost signal ].
 	self isSSL
 		ifTrue: [ self connectSSL ]
-		ifFalse: [ self connect ]
+		ifFalse: [ self connect ].
+	replacing ifTrue: [ P3ConnectionReplaced signal ]
 ]
 
 { #category : 'private' }
@@ -504,13 +559,16 @@ P3Client >> ensureResponseRead [
 
 { #category : 'error handling' }
 P3Client >> errorNoticeInfo: payload [
+	"The fields of an ErrorResponse or NoticeResponse. Their text is in the connection encoding: it
+	quotes user data and may be translated."
+
 	| info fieldType |
 	info := Dictionary new.
 	[ (fieldType := payload next) isZero ] 
 		whileFalse: [ 
 			info 
 				at: fieldType asCharacter 
-				put: (self converter asciiCStringFrom: payload) ].
+				put: (self converter textCStringFrom: payload) ].
 	^ info
 ]
 
@@ -651,6 +709,8 @@ P3Client >> initialize [
 	pendingResponses := 0.
 	transactionLost := false.
 	extendedRequest := false.
+	connectionGeneration := 0.
+	connectionLost := false.
 	
 	self beThreadSafe
 ]
@@ -882,12 +942,13 @@ P3Client >> logRetryConnection: remaining [
 { #category : 'private messages' }
 P3Client >> md5PasswordMessage: salt [
 	"concat('md5', md5(concat(md5(concat(password, username)), random-salt))).
-	Keep in mind the md5() function returns its result as a hex string."
+	Keep in mind the md5() function returns its result as a hex string.
+	The password and the user name are hashed as UTF-8, as the server stores them."
 	
 	| credential salted |
 	self password ifNil: [ P3Error passwordRequired signal ].
-	credential := (MD5 hashMessage: self password , self user) hex.
-	salted := (MD5 hashMessage: credential , salt) hex.
+	credential := (MD5 hashMessage: (self password , self user) utf8Encoded) hex.
+	salted := (MD5 hashMessage: credential asByteArray , salt) hex.
 	^ self asCString: 'md5' , salted
 ]
 
@@ -1037,19 +1098,18 @@ P3Client >> port: integer [
 
 { #category : 'public' }
 P3Client >> prepare: query [
-	"Create a P3PreparedStatement with a default name derived from the query string. 
-	Only the first 63 characters of the name are significant. For longer queries try
-	to make a unique name by using the hash value of the query string."
+	"Create a P3PreparedStatement with a default name derived from the query string, see
+	#defaultStatementNameFor:. Preparing a query that is already prepared in this session answers that
+	statement, so both holders share it and closing it closes it for both."
 
-	| name |
-	
-	name := query.
-	name size > 63
-		ifTrue: [ 
-			| hashString |
-			hashString := name hash printStringHex.
-			name := (name copyFrom: 1 to: 62 - hashString size), '_', hashString ].
-		
+	| name existing |
+	name := self defaultStatementNameFor: query.
+	existing := properties
+		at: 'prepared_statements'
+		ifPresent: [ :preparedStatements | preparedStatements at: name ifAbsent: [ nil ] ]
+		ifAbsent: [ nil ].
+	(existing notNil and: [ existing source = query and: [ existing isStale not and: [ self isConnected ] ] ])
+		ifTrue: [ ^ existing ].
 	^ self prepare: query named: name
 ]
 
@@ -1068,6 +1128,25 @@ P3Client >> prepare: query named: queryName [
 				self parseMessageFor: query name: queryName types: #().
 				self describeMessageFor: queryName type: $S } ]
 		response: [ self readPreparedStatement: query named: queryName ]
+]
+
+{ #category : 'private' }
+P3Client >> prepareAgain: aPreparedStatement [
+	"Make sure aPreparedStatement exists in my current server session. A new connection is a new session
+	and the server forgot everything prepared in the old one, so prepare its source again under its name.
+	The statement object stays the one the caller holds and takes over what the server describes now.
+
+	This runs before the request is built. A connection lost between the two is not covered: the request then
+	fails with the server's 26000, and the next use prepares again."
+
+	self critical: [
+		| fresh |
+		self ensureResponseRead.
+		self ensureConnected.
+		aPreparedStatement isStale ifTrue: [
+			fresh := self prepare: aPreparedStatement source named: aPreparedStatement name.
+			aPreparedStatement adoptPreparationOf: fresh.
+			(properties at: 'prepared_statements') at: aPreparedStatement name put: aPreparedStatement ] ]
 ]
 
 { #category : 'accessing' }
@@ -1668,8 +1747,12 @@ P3Client >> sslRequestMessage [
 	^ #[4 210 22 47] "1234 5678"
 ]
 
-{ #category : 'private' }
+{ #category : 'private messages' }
 P3Client >> startupMessage [
+	"The client_encoding is requested, whatever the role or the database default is, because I decode
+	what the server sends as UTF-8 until it reports another encoding. An application that wants another
+	one can say so in the options."
+
 	^ ByteArray streamContents: [ :out |
 			out nextPutAll: #[ 0 3 0 0 ]. "Protocol major.minor 3.0"
 			out nextPutAll: (self asCString: 'user').
@@ -1677,6 +1760,8 @@ P3Client >> startupMessage [
 			self database ifNotNil: [ 
 				out nextPutAll: (self asCString: 'database').
 				out nextPutAll: (self asCString: self database) ].
+			out nextPutAll: (self asCString: 'client_encoding').
+			out nextPutAll: (self asCString: 'UTF8').
 			self startupOptions ifNotNil: [
 				out nextPutAll: (self asCString: 'options').
 				out nextPutAll: (self asCString: self startupOptions) ].

@@ -9,6 +9,20 @@ Class {
 }
 
 { #category : 'tests' }
+P3LowSeverityTest >> boundValuesDuring: aBlock [
+	"Answer the input values of every P3StatementBoundEvent emitted while aBlock runs."
+
+	| bound |
+	bound := OrderedCollection new.
+	P3LogEvent announcer
+		when: P3StatementBoundEvent
+		do: [ :event | bound add: event inputValues ]
+		for: self.
+	[ aBlock value ] ensure: [ P3LogEvent announcer unsubscribe: self ].
+	^ bound asArray
+]
+
+{ #category : 'tests' }
 P3LowSeverityTest >> testApplicationNameDefaultsToThePharoVersionAndCanBeChanged [
 	| name other |
 	name := (client query: 'SELECT current_setting(''application_name'')') firstFieldOfFirstRecord.
@@ -22,6 +36,17 @@ P3LowSeverityTest >> testApplicationNameDefaultsToThePharoVersionAndCanBeChanged
 	other applicationName: nil.
 	[ self assert: (other query: 'SELECT current_setting(''application_name'')') firstFieldOfFirstRecord equals: '' ]
 		ensure: [ other close ]
+]
+
+{ #category : 'tests' }
+P3LowSeverityTest >> testBoundEventIsEmittedOncePerRowOfTheSentRequest [
+	| statement rows bound |
+	statement := client prepare: 'SELECT $1::int + 1'.
+	rows := { { 1 }. { 2 }. { 3 } }.
+	bound := self boundValuesDuring: [ statement executeBatch: rows ].
+	self assert: bound equals: rows.
+	bound := self boundValuesDuring: [ statement query: #( 7 ) ].
+	self assert: bound equals: { #( 7 ) }
 ]
 
 { #category : 'tests' }
@@ -53,6 +78,45 @@ P3LowSeverityTest >> testEmptyPreparedQueryKeepsTheConnection [
 P3LowSeverityTest >> testFirstFieldOfEmptyResultIsNil [
 	self assert: (client query: 'SELECT 1 WHERE false') firstFieldOfFirstRecord isNil.
 	self assert: (client query: 'SELECT 1 WHERE false') firstRecord isNil
+]
+
+{ #category : 'tests' }
+P3LowSeverityTest >> testNoBoundEventWhenTheRequestCannotBeBuilt [
+	| statement bound |
+	statement := client prepare: 'SELECT $1::int + 1'.
+	bound := self boundValuesDuring: [
+		self should: [ statement executeBatch: { { 1 }. { Object new } } ] raise: Error ].
+	self assert: bound isEmpty.
+	self assert: (client query: 'SELECT 5') firstFieldOfFirstRecord equals: 5
+]
+
+{ #category : 'tests' }
+P3LowSeverityTest >> testResultSourceIsThatOfItsOwnStatementWhenProcessesShareAClient [
+	| statements done wrong |
+	statements := #( 1 2 ) collect: [ :each | client prepare: 'SELECT $1::int + ' , each printString ].
+	done := statements collect: [ :each | Semaphore new ].
+	wrong := OrderedCollection new.
+	statements with: done do: [ :statement :semaphore |
+		[ [ 40 timesRepeat: [ | result |
+				result := statement query: #( 1 ).
+				result source = statement source ifFalse: [ wrong add: result source ] ] ]
+			ensure: [ semaphore signal ] ] fork ].
+	done do: [ :semaphore | semaphore waitTimeoutMilliseconds: 60000 ].
+	self assert: wrong isEmpty
+]
+
+{ #category : 'tests' }
+P3LowSeverityTest >> testServerGettersWaitForARunningRequest [
+	| order finished |
+	order := OrderedCollection new.
+	finished := Semaphore new.
+	[ [ client query: 'SELECT pg_sleep(1)'. order add: #request ]
+		ensure: [ finished signal ] ] fork.
+	(Delay forMilliseconds: 300) wait.
+	client serverEncoding.
+	order add: #getter.
+	finished waitTimeoutMilliseconds: 10000.
+	self assert: order asArray equals: #( #request #getter )
 ]
 
 { #category : 'tests' }

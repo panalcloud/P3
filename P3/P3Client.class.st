@@ -1578,12 +1578,17 @@ P3Client >> runExtendedQueryResult: descriptions [
 ]
 
 { #category : 'private' }
-P3Client >> runExtendedRequest: messages fieldDescriptions: fieldDescriptions [
+P3Client >> runExtendedRequest: messages fieldDescriptions: fieldDescriptions statement: statement inputRows: inputRows [
 	"Run an extended-query request: messages, a collection of tag -> payload associations built in
-	memory, sent together and ended by Sync. Answer one P3Result per Execute among them."
+	memory, sent together and ended by Sync. Answer one P3Result per Execute among them.
+	The source and the bound values are recorded under the monitor, once the request is sent, so
+	another process cannot change them between my write and my read."
 
 	^ self
-		runRequest: [ self writeExtendedRequest: messages ]
+		runRequest: [
+			properties at: #sql_source put: statement source.
+			self writeExtendedRequest: messages.
+			inputRows do: [ :each | self logBinding: statement inputValues: each ] ]
 		response: [ self basicRunExtendedQueryResults: fieldDescriptions ]
 ]
 
@@ -1700,8 +1705,9 @@ P3Client >> serverEncoding [
 	One way to set the default at the database level is with the SQL command
 	ALTER DATABASE <mydb> SET client_encoding TO 'UTF8' "
 	
-	self ensureConnected.
-	^ self converter encoder identifier
+	^ self critical: [
+		self ensureConnected.
+		self converter encoder identifier ]
 ]
 
 { #category : 'accessing' }
@@ -1711,18 +1717,20 @@ P3Client >> serverTimezone [
 	One way to set the default at the database level is with the SQL command
 	ALTER DATABASE <mydb> SET timezone TO 'UTC' "
 	
-	self ensureConnected.
-	^ self converter timezoneName
+	^ self critical: [
+		self ensureConnected.
+		self converter timezoneName ]
 ]
 
 { #category : 'accessing' }
 P3Client >> serverVersion [
 	"Return the version string of the PostgreSQL server"
 	
-	self ensureConnected.
-	^ properties 
-		at: 'server_version' 
-		ifAbsent: [ (self query: 'SHOW server_version') firstFieldOfFirstRecord ]
+	^ self critical: [
+		self ensureConnected.
+		properties 
+			at: 'server_version' 
+			ifAbsent: [ (self query: 'SHOW server_version') firstFieldOfFirstRecord ] ]
 ]
 
 { #category : 'accessing' }
@@ -1739,11 +1747,6 @@ P3Client >> setSSL [
 	The default is to use a plain unencrypted network connection."
 	
 	settings at: #ssl put: true
-]
-
-{ #category : 'private' }
-P3Client >> setSource: sql [
-	properties at: #sql_source put: sql
 ]
 
 { #category : 'error handling' }

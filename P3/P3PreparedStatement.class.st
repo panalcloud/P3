@@ -68,7 +68,7 @@ P3PreparedStatement >> adoptPreparationOf: aFreshStatement [
 P3PreparedStatement >> bindMessageFor: inputValues [
 	"The Bind message for one row of parameters, as a tag -> payload association. Building it can fail
 	on any value, which is why it is built in memory and not written to the socket. See
-	P3Client>>#writeExtendedRequest:."
+	P3Client>>#writeExtendedRequest:. It changes nothing outside of itself."
 
 	| msgBuilder |
 
@@ -88,8 +88,6 @@ P3PreparedStatement >> bindMessageFor: inputValues [
 
 	msgBuilder nextPutInt16: 0. "All result columns use the text format"
 
-	client logBinding: self inputValues: inputValues.
-	
 	^ $B -> msgBuilder asBytes
 ]
 
@@ -221,18 +219,22 @@ P3PreparedStatement >> runInputRows: inputRows [
 	"Execute me once per row of inputRows in a single request, and answer one P3Result per row.
 	The whole request is built before anything is written, so a row that cannot be bound leaves the
 	connection as it was instead of executing the rows before it. If my server session was replaced,
-	I am prepared again first."
+	I am prepared again first. Nothing shared is touched until the client runs the request under its
+	monitor."
 
 	| messages |
 	client ifNil: [ ^ (P3Error statementClosed: name) signal ].
 	client prepareAgain: self.
-	client setSource: self source.
 	messages := Array streamContents: [ :out |
 		inputRows do: [ :each |
 			out
 				nextPut: (self bindMessageFor: each);
 				nextPut: self executeMessage ] ].
-	^ client runExtendedRequest: messages fieldDescriptions: fieldDescriptions
+	^ client
+		runExtendedRequest: messages
+		fieldDescriptions: fieldDescriptions
+		statement: self
+		inputRows: inputRows
 ]
 
 { #category : 'accessing' }

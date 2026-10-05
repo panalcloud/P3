@@ -4,5 +4,11 @@ SmalltalkCISpec {
       #baseline : 'P3',
       #platforms : [ #pharo ]
     }
-  ]
+  ],
+  #testing : {
+     #coverage : {
+      #packages : [ 'P3' , 'P3-Tests' ],
+      #format: #lcov
+      }
+    }
 }

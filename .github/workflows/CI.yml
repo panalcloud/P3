@@ -1,14 +1,23 @@
 name: CI
 
-on: [ push, pull_request, workflow_dispatch ]
-          
+on:
+  push:
+    branches: [ master, local-main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: node:latest
+    # a job container is required so that the postgres service is reachable
+    # under the hostname 'postgres' (see P3ClientTest class >> #url)
+    container: node:24
     services:
       postgres:
-        image: postgres:latest
+        image: postgres:18
         # empty password
         env:
           POSTGRES_DB: postgres
@@ -26,14 +35,25 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     strategy:
+      fail-fast: false
       matrix:
         smalltalk: [ Pharo64-14, Pharo64-13, Pharo64-12 ]
     name: ${{ matrix.smalltalk }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: hpi-swa/setup-smalltalkCI@v1
         with:
           smalltalk-image: ${{ matrix.smalltalk }}
       - run: smalltalkci -s ${{ matrix.smalltalk }}
         shell: bash
-        timeout-minutes: 1
+        timeout-minutes: 15
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: CI-${{ matrix.smalltalk }}
+          token: ${{ secrets.CODECOV_TOKEN }}

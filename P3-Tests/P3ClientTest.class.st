@@ -48,6 +48,19 @@ P3ClientTest class >> url: stringOrUrl [
 	Url := stringOrUrl asUrl
 ]
 
+{ #category : 'private' }
+P3ClientTest >> assertJsonObject: actual hasSameEntriesAs: expected [
+	"Compare key by key instead of the two objects as a whole, so a CI failure names the one
+	mismatched key and its two values, instead of two differently ordered printStrings that
+	otherwise look almost identical."
+
+	self assert: actual keys asSet = expected keys asSet
+		description: 'expected keys ' , expected keys asSet printString , ' but got ' , actual keys asSet printString.
+	expected keysAndValuesDo: [ :key :value |
+		self assert: (actual at: key) = value
+			description: 'value for key ' , key printString , ' differs: got ' , (actual at: key) printString , ' expected ' , value printString ]
+]
+
 { #category : 'benchmarking' }
 P3ClientTest >> benchmark1Size [
 	^ 10000
@@ -353,22 +366,27 @@ P3ClientTest >> testEmptyString [
 P3ClientTest >> testEnum [
 	| result |
 
-	result := client 
-		execute: 'DROP TABLE IF EXISTS table1;';
-		execute: 'DROP TYPE IF EXISTS mood';
-		execute: 'CREATE TYPE mood AS ENUM (''sad'', ''ok'', ''happy'');';
-		execute: 'CREATE TABLE table1 (name text, current_mood mood );';
-		execute: 'INSERT INTO table1 VALUES (''Moe'', ''happy'');'.
+	[ 
+		result := client 
+			execute: 'DROP TABLE IF EXISTS table1;';
+			execute: 'DROP TYPE IF EXISTS mood';
+			execute: 'CREATE TYPE mood AS ENUM (''sad'', ''ok'', ''happy'');';
+			execute: 'CREATE TABLE table1 (name text, current_mood mood );';
+			execute: 'INSERT INTO table1 VALUES (''Moe'', ''happy'');'.
 				
-	result := client loadEnums.
-	
-	self assert: (result includes: #mood).
+		result := client loadEnums.
 		
-	result := client query: 'SELECT * FROM table1 WHERE current_mood = ''happy'';'.
-		
-	self assert: result firstRecord equals: #('Moe' #happy)	
-	
-
+		self assert: (result includes: #mood).
+			
+		result := client query: 'SELECT * FROM table1 WHERE current_mood = ''happy'';'.
+			
+		self assert: result firstRecord equals: #('Moe' #happy) ]
+		ensure: [ 
+			[ client
+				execute: 'DROP TABLE IF EXISTS table1';
+				execute: 'DROP TYPE IF EXISTS mood' ]
+				on: P3Notification
+				do: [ :notification | notification resume ] ]
 ]
 
 { #category : 'tests' }
@@ -433,7 +451,7 @@ P3ClientTest >> testIntervalConversion [
 	result := client query: 'SELECT INTERVAL ''1 years 1 mons 1 days 1 hours 1 minutes 1 seconds ago'''.
 	self 
 		assert: result firstFieldOfFirstRecord 
-		equals: (P3Interval years: -1 months: -1 days: -1 hours: -1 minutes: 1 seconds: 1).
+		equals: (P3Interval years: -1 months: -1 days: -1 hours: -1 minutes: -1 seconds: -1).
 
 ]
 
@@ -449,9 +467,9 @@ P3ClientTest >> testJsonConversion [
 		bar: #(true nil -123); 
 		yourself.
 	result := client query: ('SELECT ''{1}''::json' format: { data printString }).
-	self assert: result firstFieldOfFirstRecord equals: data.
+	self assertJsonObject: result firstFieldOfFirstRecord hasSameEntriesAs: data.
 	result := client query: ('SELECT ''{1}''::jsonb' format: { data printString }).
-	self assert: result firstFieldOfFirstRecord equals: data
+	self assertJsonObject: result firstFieldOfFirstRecord hasSameEntriesAs: data
 ]
 
 { #category : 'tests' }
@@ -601,6 +619,20 @@ P3ClientTest >> testQueryCatalog [
 	self assert: result rowCount equals: result numberOfRecords.
 	"each dataRow has two fields"
 	self assert: (result data allSatisfy: [ :each | each size = 2])
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testRetrySettings [
+	"#retryDelay: used to store 5 whatever it was given, so a caller could not shorten the wait
+	between reconnection attempts."
+
+	| probe |
+	probe := P3Client new.
+	self assert: probe retryCount equals: 10.
+	self assert: probe retryDelay equals: 5.
+	probe retryCount: 2; retryDelay: 2.
+	self assert: probe retryCount equals: 2.
+	self assert: probe retryDelay equals: 2
 ]
 
 { #category : 'tests' }

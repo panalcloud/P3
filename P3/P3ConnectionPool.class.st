@@ -21,7 +21,7 @@ New connections are created as needed.
 You can set a #configurator to further initialize new connections.
 You can use #warmUp or #warmUp: to precreate a number of connections.
 
-When an error occurs, the connection should not be reused and be closed by the caller.
+However a borrower ends, I decide myself whether its connection can be reused: a failed query leaves it usable, because the rest of its response was read, but an unread response, an open transaction or a lost transaction belongs to the caller that had it and is not the next one's to inherit. See #isReusable:. Either way the connection is pooled or closed here, never dropped.
 
 "
 Class {
@@ -62,9 +62,10 @@ P3ConnectionPool >> capacity [
 { #category : 'initialization' }
 P3ConnectionPool >> close [
 	"Close all pooled connections and remove them"
-	
-	pool do: [ :each | each close ].
-	pool removeAll
+
+	access critical: [
+		pool do: [ :each | each close ].
+		pool removeAll ]
 ]
 
 { #category : 'initialization' }
@@ -82,6 +83,19 @@ P3ConnectionPool >> initialize [
 	access := Mutex new.
 	pool := OrderedCollection new: 10.
 	configurator := [ :p3Client | self assert: p3Client isWorking ]
+]
+
+{ #category : 'private' }
+P3ConnectionPool >> isReusable: connection [
+	"Is connection fit to go back into the pool? Only when its last transaction was not lost, nothing of
+	its last request is left on it, and it is not inside a transaction, failed or not.
+	A transaction the next user would join, or an unread response it would be answered with, are not
+	its to inherit, and a connection that refuses to reconnect would fail the next user's first request.
+	A connection that is not open is fine, it opens when it is used."
+
+	^ connection isTransactionLost not
+		and: [ connection isResponsePending not
+			and: [ (connection transactionStatus ifNil: [ $I ]) = $I ] ]
 ]
 
 { #category : 'private' }
@@ -105,13 +119,14 @@ P3ConnectionPool >> printOn: stream [
 { #category : 'public' }
 P3ConnectionPool >> releaseConnection: connection [
 	"Return connection (a P3Client) to the pool.
-	If the pool is at its capacity, close it.
+	A connection that is not reusable, see #isReusable:, is closed instead, as is one that arrives
+	when the pool is at its capacity.
 	After this, the caller can no longer use connection."
-	
-	access critical: [  
-		pool size < pool capacity
+
+	access critical: [
+		(pool size < pool capacity and: [ self isReusable: connection ])
 			ifTrue: [ pool addLast: connection ]
-			ifFalse: [ connection close ] ]
+			ifFalse: [ [ connection close ] on: Error do: [ :exception | ] ] ]
 ]
 
 { #category : 'accessing' }
@@ -161,15 +176,13 @@ P3ConnectionPool >> warmUp: numberOfConnections [
 { #category : 'public' }
 P3ConnectionPool >> withConnection: oneArgumentBlock [
 	"Execute oneArgumentBlock with a connection (P3Client) as argument,
-	acquiring it from the pool and releasing it to the pool when done,
-	unless an error occurs (in which case the caller should close)."
-	
-	| connection result error |
+	acquiring it from the pool and releasing it to the pool when done.
+	However the block ends, by a normal return, an error or a non local exit, the connection is
+	pooled again only when it is clean, see #isReusable:, otherwise it is closed:
+	leaving it neither pooled nor closed leaks the socket."
+
+	| connection |
 	connection := self acquireConnection.
-	error := result := nil.
-	[ [ result := oneArgumentBlock value: connection ] 
-			on: Error 
-			do: [ :exception | error := exception. error pass ] ] 
-		ensure: [ error ifNil: [ self releaseConnection: connection ] ].
-	^ result
+	^ [ oneArgumentBlock value: connection ]
+		ensure: [ self releaseConnection: connection ]
 ]

@@ -26,6 +26,15 @@ P3Error class >> bindCompleteExpected [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> cannotBindObject: anObject [
+	"A prepared statement has no parameter text for anObject. Its print string is neither SQL nor data, so it is refused instead of stored."
+
+	^ self new
+		info: { $C->'P3035'. $M->('Cannot bind an object of class {1} as a parameter' format: { anObject class name }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> cannotConvertTypeOid: typeOid [
 	^ self new 
@@ -33,10 +42,77 @@ P3Error class >> cannotConvertTypeOid: typeOid [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> cannotFormatObject: anObject [
+	"A formatted statement has no SQL text for anObject."
+
+	^ self new
+		info: { $C->'P3031'. $M->('Cannot format an object of class {1} as SQL' format: { anObject class name }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> cannotReadInfinity: aText [
+	"A date or timestamp can be infinity or -infinity. Date and DateAndTime have no infinite value, and any date I answered for it would be wrong and compare as a real one."
+
+	^ self new
+		info: { $C->'P3038'. $M->('Cannot read "{1}" as a date or timestamp, it is not a finite point in time. Select it cast to text to read it' format: { aText }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> cannotRepresentNumeric: numericText [
+	"A numeric can be NaN, Infinity or -Infinity. A ScaledDecimal is a fraction and has none of them."
+
+	^ self new
+		info: { $C->'P3034'. $M->('Cannot read numeric "{1}" as a ScaledDecimal, it is not a finite number' format: { numericText }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> closeCompleteExpected [
 	^ self new 
 		info: { $C->'P3005'. $M->'CloseComplete message expected' } asDictionary; 
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> commitReportedAs: resultTag [
+	"COMMIT on a transaction already in the failed ($E) state does not commit: PostgreSQL
+	quietly runs a ROLLBACK instead and reports that as the command tag, with no error of its
+	own. P3DatabaseDriver>>commitTransaction checks the tag it gets back so a caller that
+	swallowed an earlier error is not told its unit of work was saved when it was not."
+
+	^ self new
+		info: { $C->'P3051'. $M->('COMMIT was not honored, the server reports {1}' format: { resultTag }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> connectionLost [
+	"See P3Client>>#autoReconnect: the connection went away and I am not to replace it by myself."
+
+	^ self new
+		info: { $C->'P3052'. $M->'Connection was lost and autoReconnect is off, reconnect explicitly to continue' } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> connectionLostInTransaction [
+	"See P3Client>>#closeAfterFailure: reconnecting would continue in autocommit what the caller
+	still believes is one transaction."
+
+	^ self new
+		info: { $C->'P3050'. $M->'Connection was lost inside a transaction, reconnect explicitly to continue' } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> copyNotSupported [
+	"COPY streams its data in messages of its own, which I neither produce nor read."
+
+	^ self new
+		info: { $C->'P3007'. $M->'COPY to or from STDIN/STDOUT is not supported' } asDictionary;
 		yourself
 ]
 
@@ -82,6 +158,25 @@ P3Error class >> readyForQueryExpected [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> statementClosed: statementName [
+	"A closed prepared statement has no connection and can no longer run."
+
+	^ self new
+		info: { $C->'P3036'. $M->('Prepared statement "{1}" is closed' format: { statementName }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> unexpectedMessage: tag [
+	"A message I cannot place in the response I am reading. Its arrival means the message stream is
+	out of step, so the connection can no longer be positioned."
+
+	^ self new
+		info: { $C->'P3006'. $M->('Unexpected message {1} while reading a response' format: { tag asString }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> unexpectedMessageDuringAuthentication [
 	^ self new 
@@ -96,10 +191,55 @@ P3Error class >> unexpectedMessageDuringStartup [
 		yourself
 ]
 
+{ #category : 'instance creation' }
+P3Error class >> unknownTimezone: zoneName [
+	"The session time zone has a name that I cannot resolve, so a time without a zone cannot be placed."
+
+	^ self new
+		info: { $C->'P3039'. $M->('Cannot read a time without a zone: the server time zone "{1}" is unknown, use a named zone with SET TIME ZONE' format: { zoneName }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> unreadableValue: typeName text: valueText [
+	"The text of a value is not in any format the server writes for its type."
+
+	^ self new
+		info: { $C->'P3041'. $M->('Cannot read the {1} value "{2}", it is not in a format the server writes' format: { typeName. valueText }) } asDictionary;
+		yourself
+]
+
 { #category : 'accessing' }
 P3Error class >> unsupportedAuthenticationType: type [
 	^ self new 
 		info: { $C->'P3022'. $M->('Unsupported authentication type {1}' format: { type }) } asDictionary; 
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> unsupportedDateStyle: dateStyle [
+	"I read dates, times and timestamps as ISO 8601, which only DateStyle ISO produces."
+
+	^ self new
+		info: { $C->'P3032'. $M->('Cannot read dates under DateStyle "{1}", ISO is required' format: { dateStyle }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> unsupportedIntervalStyle: intervalStyle [
+	"P3Interval reads the 'postgres' output format only."
+
+	^ self new
+		info: { $C->'P3033'. $M->('Cannot read intervals under IntervalStyle "{1}", postgres is required' format: { intervalStyle }) } asDictionary;
+		yourself
+]
+
+{ #category : 'instance creation' }
+P3Error class >> unsupportedSslMode: aMode [
+	"A url asks for a sslmode that P3 cannot honour. Connecting anyway would drop the TLS the url asks for."
+
+	^ self new
+		info: { $C->'P3037'. $M->('Cannot honour sslmode "{1}", only "disable" and "require" are supported. The server certificate is not verified, and connecting without TLS as a fallback is not implemented' format: { aMode }) } asDictionary;
 		yourself
 ]
 

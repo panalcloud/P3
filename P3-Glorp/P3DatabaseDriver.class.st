@@ -16,15 +16,16 @@ Configure your session using a Glorp Login object
     yourself.
 "
 Class {
-	#name : #P3DatabaseDriver,
-	#superclass : #DatabaseDriver,
+	#name : 'P3DatabaseDriver',
+	#superclass : 'DatabaseDriver',
 	#instVars : [
 		'rowCount'
 	],
-	#category : #'P3-Glorp'
+	#category : 'P3-Glorp',
+	#package : 'P3-Glorp'
 }
 
-{ #category : #executing }
+{ #category : 'executing' }
 P3DatabaseDriver >> basicExecuteSQLString: aString [
 	| result |
 	result := connection query: aString.
@@ -32,17 +33,19 @@ P3DatabaseDriver >> basicExecuteSQLString: aString [
 	^ (result hasData ifTrue: [ result data ] ifFalse: [ #() ]) readStream
 ]
 
-{ #category : #transactions }
+{ #category : 'transactions' }
 P3DatabaseDriver >> beginTransaction [
 	connection execute: 'BEGIN TRANSACTION'
 ]
 
-{ #category : #transactions }
+{ #category : 'transactions' }
 P3DatabaseDriver >> commitTransaction [
-	connection execute: 'COMMIT TRANSACTION'
+	| result |
+	result := connection execute: 'COMMIT TRANSACTION'.
+	result = 'COMMIT' ifFalse: [ (P3Error commitReportedAs: result) signal ]
 ]
 
-{ #category : #accessing }
+{ #category : 'accessing' }
 P3DatabaseDriver >> connect: aLogin [
 	connection := self connectionClass new.
 	connection 
@@ -54,7 +57,7 @@ P3DatabaseDriver >> connect: aLogin [
 	connection connect
 ]
 
-{ #category : #accessing }
+{ #category : 'accessing' }
 P3DatabaseDriver >> connectSSL: aLogin [
 	connection := self connectionClass new.
 	connection
@@ -67,29 +70,29 @@ P3DatabaseDriver >> connectSSL: aLogin [
 	connection connectSSL
 ]
 
-{ #category : #accessing }
+{ #category : 'accessing' }
 P3DatabaseDriver >> connectionClass [
 	^ P3Client
 ]
 
-{ #category : #testing }
+{ #category : 'testing' }
 P3DatabaseDriver >> isConnected [
 	^ connection notNil and: [ connection isConnected ]
 ]
 
-{ #category : #login }
+{ #category : 'login' }
 P3DatabaseDriver >> logout [
 	connection ifNotNil: [ 
 		connection close.
 		connection := nil ]
 ]
 
-{ #category : #transactions }
+{ #category : 'transactions' }
 P3DatabaseDriver >> rollbackTransaction [
 	connection execute: 'ROLLBACK TRANSACTION'
 ]
 
-{ #category : #accessing }
+{ #category : 'accessing' }
 P3DatabaseDriver >> rowCount [
 	^ rowCount
 ]

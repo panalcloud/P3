@@ -1681,11 +1681,12 @@ P3Client >> secureStreamOn: aSocketStream [
 	the encrypted stream."
 
 	| reply |
+	
 	aSocketStream nextPutAll: #[ 0 0 0 8 ] , self sslRequestMessage; flush.
 	reply := aSocketStream next asCharacter.
 	reply = $S
 		ifFalse: [ ^ P3Error postgreSQLServerDidNotHonorSSLConnectionRequest signal ].
-	^ ZdcSecureSocketStream on: aSocketStream socket; connect; yourself
+	^ (ZdcSecureSocketStream on: aSocketStream socket) connect; yourself
 ]
 
 { #category : 'private' }

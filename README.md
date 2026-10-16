@@ -301,12 +301,60 @@ Every request reads its own response, also after an error, a conversion failure 
 A request is retried on a new connection only when it failed before it was sent.
 
 A connection lost outside a transaction is replaced on the next request and P3ConnectionReplaced
-is signalled: the new server session has none of the SET values, temporary tables or LISTEN
-registrations of the old one. Prepared statements are prepared again. With `#autoReconnect: false`
+is signalled: the new server session has none of the SET values or temporary tables of the old one.
+Prepared statements are prepared again, and channels subscribed with `#listen:` are subscribed again
+before P3ConnectionReplaced is signalled. With `#autoReconnect: false`
 the next request raises a P3Error instead and `#connect` continues.
 
 A connection lost inside a transaction is never replaced silently: the server rolled the
 transaction back, so the next request raises a P3Error until `#connect` or `#close`.
+
+## Asynchronous notifications (LISTEN/NOTIFY)
+
+A client can subscribe to channels and receive the NOTIFYs other sessions send on them.
+
+```smalltalk
+listener := P3Client url: 'psql://sven@localhost'.
+listener listen: 'orders'.
+
+"elsewhere"
+(P3Client url: 'psql://sven@localhost') notify: 'orders' payload: '{"id":42}'.
+
+"in the listening process"
+[ (listener waitForNotification: 30)
+	ifNotNil: [ :notification | notification channel. notification payload ] ] repeat.
+```
+
+- `#listen:`, `#unlisten:`, `#unlistenAll` and `#listeningChannels` manage the subscriptions. Channel names
+  are sent as quoted identifiers, so case, spaces and quotes are part of the name. A name must not be empty
+  nor longer than 63 bytes: the server would truncate it on LISTEN while `pg_notify` refuses it. LISTEN and
+  UNLISTEN are refused inside a transaction, because a rollback would undo them.
+- `#notify:payload:` sends one through `pg_notify`, with channel and payload as parameters.
+- Notifications are read whatever the client is doing: between the messages of any response, while
+  starting up, while idle. Each is a P3ChannelNotification (`channel`, `payload`, `processId`, `receivedAt`)
+  queued in arrival order.
+- `#hasNotifications` and `#takeNotifications` do not block. `#waitForNotification:` answers the oldest
+  queued notification, or waits at most the given seconds for one without sending anything, and answers nil
+  on timeout. `#waitForNotifications:` answers all of them. A wait gives other processes the client between
+  slices of at most 100 milliseconds and can be terminated from another process.
+- `#notificationHandler:` takes a one argument block that receives each notification once the response that
+  carried it is read. It may use the client; its errors are logged as P3ErrorOccurredEvent. Each
+  notification is answered once: a wait or `#takeNotifications` that runs first takes it.
+- The queue is bounded by `#notificationLimit:` (default 10000). Beyond it the oldest notifications are
+  dropped and counted by `#droppedNotificationCount`, which a consumer watches to know it must resynchronise.
+
+What PostgreSQL guarantees, as seen through P3: a NOTIFY inside a transaction is delivered at commit, and
+not at all on rollback; identical channel and payload pairs in one transaction are delivered once;
+notifications from different transactions arrive in commit order; a session receives its own
+notifications. A payload must be shorter than 8000 bytes.
+
+A lost connection ends a wait in progress with a P3Error (P3072). The next wait or request opens a new
+session, subscribes to `#listeningChannels` again, announces P3ListenRestoredEvent and signals
+P3ConnectionReplaced. Notifications sent while the connection was down are lost, so a listener resynchronises
+when it sees either. An explicit `#close` forgets the subscriptions.
+
+A listening connection should be dedicated. P3ConnectionPool unsubscribes a released connection that
+listens through `#listen:` or has notifications queued, empties its queue and removes its handler.
 
 ## Glorp
 
@@ -443,6 +491,11 @@ Executing the four expressions of the Basic Usage section yields the following o
 2020-09-21 16:39:52 022 [P3] 63801 #Result DROP TABLE, 13 ms
 2020-09-21 16:39:52 023 [P3] 63801 #Close
 ```
+
+Asynchronous notifications add four events: P3ListenEvent (`#Listen`, `#Unlisten`, `#UnlistenAll`),
+P3ListenRestoredEvent (`#ListenRestored`, after a lost connection was replaced), and, only while somebody
+subscribes, P3NotificationReceivedEvent (`#Notification`) and P3NotificationsDroppedEvent
+(`#NotificationsDropped`).
 
 Remember that the information inside the log events can be used to build other applications.
 

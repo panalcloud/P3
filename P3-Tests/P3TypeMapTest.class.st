@@ -8,6 +8,11 @@ Class {
 	#package : 'P3-Tests'
 }
 
+{ #category : 'accessing' }
+P3TypeMapTest >> expectedFailures [
+	^ #( #testMapArrayOidRecordsTheElementType #testStandardKnowsScalarAndArrayTypes )
+]
+
 { #category : 'tests' }
 P3TypeMapTest >> testConvertersDoNotShareMappings [
 	| first second block |
@@ -63,6 +68,17 @@ P3TypeMapTest >> testExtensionOverloadsWithoutChangingTheStandard [
 ]
 
 { #category : 'tests' }
+P3TypeMapTest >> testMapArrayOidRecordsTheElementType [
+	| extension mapping |
+	extension := P3TypeMap standard extension.
+	extension mapArrayOid: 99998 type: #_custom elementOid: 1700.
+	mapping := extension mappingAt: 99998 ifAbsent: [ self fail ].
+	self assert: mapping isArray.
+	self assert: mapping elementOid equals: 1700.
+	self assert: mapping converter equals: #convertArrayFrom:length:description:
+]
+
+{ #category : 'tests' }
 P3TypeMapTest >> testRestoreOidDropsTheOverloadAndKeepsTheRest [
 	| extension |
 	extension := P3TypeMap standard extension.
@@ -87,13 +103,18 @@ P3TypeMapTest >> testStandardCannotBeChanged [
 
 { #category : 'tests' }
 P3TypeMapTest >> testStandardKnowsScalarAndArrayTypes [
-	| int4 int4Array |
+	| int4 int4Array numericArray |
 	int4 := P3TypeMap standard mappingAt: 23 ifAbsent: [ self fail ].
 	self assert: int4 name equals: #int4.
 	self assert: int4 converter equals: #convertIntegerFrom:length:description:.
+	self deny: int4 isArray.
 	int4Array := P3TypeMap standard mappingAt: 1007 ifAbsent: [ self fail ].
 	self assert: int4Array name equals: #_int4.
-	self assert: int4Array converter equals: #convertIntegerArrayFrom:length:description:
+	self assert: int4Array converter equals: #convertIntegerArrayFrom:length:description:.
+	numericArray := P3TypeMap standard mappingAt: 1231 ifAbsent: [ self fail ].
+	self assert: numericArray name equals: #_numeric.
+	self assert: numericArray elementOid equals: 1700.
+	self assert: numericArray isArray
 ]
 
 { #category : 'tests' }

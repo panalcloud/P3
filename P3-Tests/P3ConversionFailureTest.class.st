@@ -14,11 +14,106 @@ Class {
 	#package : 'P3-Tests'
 }
 
+{ #category : 'accessing' }
+P3ConversionFailureTest >> expectedFailures [
+	^ #( #testCatalogTypeAclitemArrayConvertsToStringArray #testCatalogTypeInt2VectorConvertsToIntegerArray #testCatalogTypePgNodeTreeConvertsToString #testCatalogTypeRegprocConvertsToString #testCatalogTypeXidAndCidConvertToIntegers #testCatalogTypesAreConvertible )
+]
+
 { #category : 'private' }
 P3ConversionFailureTest >> int4Oid [
 	"The type OID I break to simulate a value P3 cannot convert."
 
 	^ 23
+]
+
+{ #category : 'tests' }
+P3ConversionFailureTest >> testCatalogTypeAclitemArrayConvertsToStringArray [
+	"_aclitem (1034), the array type of aclitem (1033): read each grant entry as a raw string,
+	e.g. 'alice=arwdDxt/alice', rather than parsing the grantee/privileges/grantor structure."
+
+	| acl |
+	acl := (client query: 'SELECT relacl FROM pg_class WHERE relacl IS NOT NULL LIMIT 1')
+		firstFieldOfFirstRecord.
+	self assert: acl class equals: Array.
+	self assert: acl notEmpty.
+	acl do: [ :each | self assert: each isString ]
+]
+
+{ #category : 'tests' }
+P3ConversionFailureTest >> testCatalogTypeCharConvertsToCharacter [
+	"""char"" (OID 18) is PostgreSQL's internal single-byte type, distinct from bpchar/varchar."
+
+	self
+		assert: (client query: 'SELECT ''x''::"char"') firstFieldOfFirstRecord
+		equals: $x
+]
+
+{ #category : 'tests' }
+P3ConversionFailureTest >> testCatalogTypeInt2VectorConvertsToIntegerArray [
+	"int2vector (OID 22) is textually the same space-separated integer list as oidvector (30),
+	just narrower elements; the same vector parser reads both."
+
+	self
+		assert: (client query: 'SELECT ''1 2''::int2vector') firstFieldOfFirstRecord
+		equals: #( 1 2 )
+]
+
+{ #category : 'tests' }
+P3ConversionFailureTest >> testCatalogTypePgNodeTreeConvertsToString [
+	"pg_node_tree (194) is an internal serialized expression tree; read as raw text, not parsed.
+	p3_test's pg_attrdef starts out empty, so create a default expression to read one back."
+
+	client execute: 'CREATE TEMP TABLE p3_node_tree_probe (i int DEFAULT 1 + 1)'.
+	self
+		assert: (client
+			query: 'SELECT adbin FROM pg_attrdef WHERE adrelid = ''p3_node_tree_probe''::regclass')
+			firstFieldOfFirstRecord
+		isString
+]
+
+{ #category : 'tests' }
+P3ConversionFailureTest >> testCatalogTypeRegprocConvertsToString [
+	"regproc (OID 24) prints as the plain function name."
+
+	self
+		assert: (client query: 'SELECT ''int4in''::regproc') firstFieldOfFirstRecord
+		equals: 'int4in'
+]
+
+{ #category : 'tests' }
+P3ConversionFailureTest >> testCatalogTypeXidAndCidConvertToIntegers [
+	"xid (28) and cid (29) are the system columns xmin/cmin: unsigned transaction/command
+	counters, printed as plain decimals. pg_class always has visible rows."
+
+	| record |
+	record := (client query: 'SELECT xmin, cmin FROM pg_class LIMIT 1') firstRecord.
+	self assert: record first isInteger.
+	self assert: record second isInteger
+]
+
+{ #category : 'tests' }
+P3ConversionFailureTest >> testCatalogTypesAreConvertible [
+	"pg_catalog columns should be readable without ::text casts. Each expression gets its own
+	client because an unconvertible value desynchronises the connection it was read on, which
+	would make every later expression fail for the wrong reason."
+
+	| unconvertible |
+	unconvertible := OrderedCollection new.
+	#( #( 'SELECT ''x''::"char"' '"char"' )
+	   #( 'SELECT ''1 2''::int2vector' 'int2vector' )
+	   #( 'SELECT ''int4in''::regproc' 'regproc' )
+	   #( 'SELECT xmin FROM pg_class LIMIT 1' 'xid' )
+	   #( 'SELECT cmin FROM pg_class LIMIT 1' 'cid' )
+	   #( 'SELECT adbin FROM pg_attrdef LIMIT 1' 'pg_node_tree' )
+	   #( 'SELECT relacl FROM pg_class WHERE relacl IS NOT NULL LIMIT 1' '_aclitem' ) )
+		do: [ :each |
+			| probe |
+			probe := P3Client new url: P3ClientTest url; yourself.
+			[ [ probe query: each first ]
+				on: P3Error
+				do: [ :error | unconvertible add: each second -> error messageText ] ]
+				ensure: [ [ probe close ] on: Error do: [ :error | ] ] ].
+	self assert: unconvertible asArray equals: #()
 ]
 
 { #category : 'tests' }

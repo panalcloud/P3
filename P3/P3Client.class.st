@@ -563,6 +563,21 @@ P3Client >> defaultStatementNameFor: query [
 ]
 
 { #category : 'private' }
+P3Client >> deliverNotifications [
+	"Hand the queued notifications to my #notificationHandler:, in order, once the response that carried
+	them is completely read. Only from a request that is not nested in another use of my monitor, so the
+	handler never runs in the middle of an operation and can use me itself. A handler failure is logged
+	as a P3ErrorOccurredEvent and does not stop the others."
+
+	notificationHandler ifNil: [ ^ self ].
+	(access notNil and: [ access isOwnerProcess ]) ifTrue: [ ^ self ].
+	self takeNotifications do: [ :each |
+		[ notificationHandler value: each ]
+			on: Error
+			do: [ :error | self logError: error ] ]
+]
+
+{ #category : 'private' }
 P3Client >> describeMessageFor: aName type: aChar [
 	"The Describe message for a prepared statement ($S) or a portal ($P), as a tag -> payload
 	association. See #writeExtendedRequest:."
@@ -1282,6 +1297,25 @@ P3Client >> noteResponseRequested [
 ]
 
 { #category : 'notifications' }
+P3Client >> notificationHandler [
+	"See #notificationHandler:."
+
+	^ notificationHandler
+]
+
+{ #category : 'notifications' }
+P3Client >> notificationHandler: aBlockOrNil [
+	"Hand each notification to aBlockOrNil, a one argument block, instead of keeping it queued. It runs in
+	the process that made the request whose response carried the notification, after that response
+	is read completely, and may use me. Its errors are logged as P3ErrorOccurredEvent and not passed on.
+
+	Each notification is answered once: #waitForNotification: and #takeNotifications take it first when
+	they run before the request ends. Nil, the default, keeps notifications queued."
+
+	notificationHandler := aBlockOrNil
+]
+
+{ #category : 'notifications' }
 P3Client >> notificationLimit [
 	"How many notifications my queue keeps, default 10000. Beyond that the oldest is dropped and counted,
 	see #droppedNotificationCount."
@@ -1935,7 +1969,9 @@ P3Client >> runRequest: writeBlock response: readBlock [
 	A network failure before the server received the request is retried on a fresh connection,
 	because nothing ran. Once the request is sent, a network failure is not retried, see
 	#readResponse:, running it again could execute it twice. The delay between retries is waited
-	outside the monitor, so other processes can use me meanwhile."
+	outside the monitor, so other processes can use me meanwhile.
+
+	Once the response is read, queued notifications go to the #notificationHandler:, if any."
 
 	| remaining result |
 	remaining := self retryCount.
@@ -1946,6 +1982,7 @@ P3Client >> runRequest: writeBlock response: readBlock [
 			self logRetryConnection: remaining.
 			self retryDelay seconds wait ].
 		remaining := remaining - 1 ].
+	self deliverNotifications.
 	^ result
 ]
 

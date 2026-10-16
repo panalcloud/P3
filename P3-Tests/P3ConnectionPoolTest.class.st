@@ -156,6 +156,26 @@ P3ConnectionPoolTest >> testFinishedTransactionsArePooled [
 ]
 
 { #category : 'tests' }
+P3ConnectionPoolTest >> testListeningConnectionIsResetOnRelease [
+	"A borrower's subscriptions are not the next one's: the connection is pooled without them."
+
+	| first second |
+	first := pool withConnection: [ :p3Client | p3Client listen: 'p3_pool_test'. p3Client ].
+	self assert: pool size equals: 1.
+	second := pool withConnection: [ :p3Client |
+		self assert: p3Client listeningChannels isEmpty.
+		self assert: (p3Client query: 'SELECT pg_listening_channels()') data isEmpty.
+		p3Client ].
+	self assert: second identicalTo: first
+]
+
+{ #category : 'tests' }
+P3ConnectionPoolTest >> testNotificationHandlerIsClearedOnRelease [
+	pool withConnection: [ :p3Client | p3Client notificationHandler: [ :notification | ] ].
+	pool withConnection: [ :p3Client | self assert: p3Client notificationHandler isNil ]
+]
+
+{ #category : 'tests' }
 P3ConnectionPoolTest >> testOne [
 	self assert: pool size equals: 0.
 	self 
@@ -167,6 +187,21 @@ P3ConnectionPoolTest >> testOne [
 							(p3Client query: 'SELECT 10-2') firstFieldOfFirstRecord ]) 
 		equals: 8.
 	self assert: pool size equals: 1
+]
+
+{ #category : 'tests' }
+P3ConnectionPoolTest >> testPendingNotificationsAreDroppedOnRelease [
+	"A LISTEN in plain SQL is not tracked, but the notifications it brought show it: the release
+	unlistens everything and empties the queue."
+
+	pool withConnection: [ :p3Client |
+		p3Client execute: 'LISTEN p3_pool_raw'.
+		p3Client notify: 'p3_pool_raw' payload: 'left behind'.
+		self assert: p3Client hasNotifications ].
+	self assert: pool size equals: 1.
+	pool withConnection: [ :p3Client |
+		self deny: p3Client hasNotifications.
+		self assert: (p3Client query: 'SELECT pg_listening_channels()') data isEmpty ]
 ]
 
 { #category : 'tests' }

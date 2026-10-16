@@ -258,6 +258,7 @@ P3Converter >> convertDateAndTimeFrom: bytes length: length description: descrip
 { #category : 'converting-chronology' }
 P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length description: description [
 	"TIMESTAMP WITHOUT TIME ZONE (TIMESTAMP) is stored internally in Postgres the way it was inserted, its representation remains constant, with no offset added. We use the timezone of the connection to do the necessary shifting. This assumes that the timezones used during insert/update and query are the same. For this to work, the connection output format must be ISO, the default.
+	The fields are a wall time of the session zone, so the offset is the one that zone has at that local time, see ZTimezone>>#offsetForLocalTimestamp:. That gives the instant the server means, also in the hour that does not exist and the one that exists twice when the offset changes.
 	The plain form is read and shifted by #plainTimestampFrom:length:zone:, anything else by P3ISO8601Parser.
 	Without a known session zone the parser path signals, as #sessionTimezone does."
 
@@ -269,7 +270,7 @@ P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length descr
 	timestamp := (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length))
 							timestampClass: timestampClass;
 							parseDateAndTime.
-	offset := self sessionTimezone offsetForTimestamp: timestamp.
+	offset := self sessionTimezone offsetForLocalTimestamp: timestamp.
 	^ offset isZero
 		ifTrue: [ timestamp ]
 		ifFalse: [ timestamp translateTo: offset ]
@@ -813,8 +814,9 @@ P3Converter >> plainTimestampFrom: bytes length: length zone: aTimezoneOrNil [
 	and leave bytes where it was for any other text, which the parser reads: a year of more than four
 	digits, a time before the common era, an offset with seconds, infinity.
 
-	With aTimezoneOrNil, the fields are kept and the offset becomes the one of that zone, as
-	DateAndTime>>#translateTo: does, see #convertDateAndTimeWithoutTimezoneFrom:length:description:."
+	With aTimezoneOrNil, the fields are kept as a wall time of that zone and the offset becomes the one
+	the zone has at that local time, as DateAndTime>>#translateTo: does, see
+	#convertDateAndTimeWithoutTimezoneFrom:length:description:."
 
 	| buffer start end year month day hour minute second index nanoSecond offset timestamp zoneOffset |
 	length >= 19 ifFalse: [ ^ nil ].
@@ -862,7 +864,7 @@ P3Converter >> plainTimestampFrom: bytes length: length zone: aTimezoneOrNil [
 		on: DateError
 		do: [ :error | ^ nil ].
 	aTimezoneOrNil ifNotNil: [
-		zoneOffset := aTimezoneOrNil offsetForTimestamp: timestamp.
+		zoneOffset := aTimezoneOrNil offsetForLocalTimestamp: timestamp.
 		zoneOffset isZero ifFalse: [
 			timestamp := timestampClass == DateAndTime
 				ifTrue: [ DateAndTime

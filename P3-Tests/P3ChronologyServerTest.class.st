@@ -8,11 +8,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3ChronologyServerTest >> expectedFailures [
-	^ #( #testTimestampsWithoutZoneAreTheInstantTheServerMeansAroundChangesOfOffset )
-]
-
 { #category : 'private' }
 P3ChronologyServerTest >> readOf: aSelectSql [
 	^ (client query: aSelectSql) firstFieldOfFirstRecord

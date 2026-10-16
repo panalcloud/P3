@@ -22,6 +22,20 @@ P3ConversionFailureTest >> int4Oid [
 ]
 
 { #category : 'tests' }
+P3ConversionFailureTest >> testConnectionAnswersItsOwnQueriesAfterFailureInPreparedStatement [
+	"runExtendedQueryResult: reads rows the same way runQueryResult does and leaves the same
+	messages unread. The statement is not closed: closing it needs the connection the failure
+	broke, and tearDown drops the whole client anyway."
+
+	| statement |
+	statement := client prepare: 'SELECT $1::int4' named: 'p3_conversion_failure_test'.
+	self
+		should: [ self withUnconvertibleInt4Do: [ statement query: #( 7 ) ] ]
+		raise: P3Error.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests' }
 P3ConversionFailureTest >> testConnectionAnswersItsOwnQueriesAfterFailureOnMultipleRows [
 	"Failing on the first of several rows leaves DataRow messages in the stream. The next query
 	reads one of them with no row description at all, so it fails inside processDataRowUsing:

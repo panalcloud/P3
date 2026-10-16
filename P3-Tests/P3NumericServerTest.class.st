@@ -17,6 +17,11 @@ P3NumericServerTest >> errorOf: aBlock [
 		do: [ :error | error ]
 ]
 
+{ #category : 'accessing' }
+P3NumericServerTest >> expectedFailures [
+	^ #( #testNonFiniteNumericInPreparedStatementSignalsP3Error )
+]
+
 { #category : 'private' }
 P3NumericServerTest >> nonFiniteLiterals [
 	"The infinities of a numeric exist from PostgreSQL 14."
@@ -80,6 +85,14 @@ P3NumericServerTest >> testNonFiniteNumericAmongFiniteRowsFailsTheWholeQuery [
 	| error |
 	error := self errorOf: [
 		self readOf: 'SELECT x FROM (VALUES (1.5::numeric), (''NaN''::numeric), (2.5::numeric)) AS v(x)' ].
+	self assert: error code equals: 'P3034'.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests-reading' }
+P3NumericServerTest >> testNonFiniteNumericInPreparedStatementSignalsP3Error [
+	| error |
+	error := self errorOf: [ self preparedValueOf: 'SELECT ''NaN''::numeric' with: #() ].
 	self assert: error code equals: 'P3034'.
 	self assertConnectionAnswersItsOwnQueries
 ]

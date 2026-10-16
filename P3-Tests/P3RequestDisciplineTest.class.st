@@ -44,6 +44,11 @@ P3RequestDisciplineTest >> clients [
 ]
 
 { #category : 'accessing' }
+P3RequestDisciplineTest >> expectedFailures [
+	^ #( #testBatchBindFailureExecutesNothing #testCloseAfterAbandonedResponse #testPreparedStatementAfterAbandonedResponse )
+]
+
+{ #category : 'accessing' }
 P3RequestDisciplineTest >> statementName [
 	"The name I prepare statements under. One name is enough: each test gets its own connection."
 
@@ -80,6 +85,40 @@ P3RequestDisciplineTest >> terminateWriterOf: pool gatedAt: aSelector [
 	worker resume.
 	reached wait.
 	worker terminate
+]
+
+{ #category : 'tests - writing requests' }
+P3RequestDisciplineTest >> testBatchBindFailureExecutesNothing [
+	"A batch is one request. If building the Bind message for one row fails, none of the rows may
+	reach the server: otherwise the caller is told the batch failed while part of it ran, and the
+	rows already written are flushed with whatever request comes next."
+
+	| statement |
+	client execute: 'CREATE TEMP TABLE ' , self tableName , ' (i int)'.
+	statement := client
+		prepare: 'INSERT INTO ' , self tableName , ' VALUES ($1)'
+		named: self statementName.
+	self
+		should: [ statement executeBatch: { #( 1 ). #( 2 ). { P3FailingParameter new } } ]
+		raise: ZeroDivide.
+	self
+		assert: (client query: 'SELECT count(*) FROM ' , self tableName) firstFieldOfFirstRecord
+		equals: 0.
+	self assert: client transactionStatus equals: $I.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - abandoned responses' }
+P3RequestDisciplineTest >> testCloseAfterAbandonedResponse [
+	"Closing a prepared statement is a request like any other: it must drain a response nobody read
+	instead of reading it as its own CloseComplete."
+
+	| statement |
+	statement := client prepare: 'SELECT $1::int4 + 1000' named: self statementName.
+	self abandonResponse.
+	statement close.
+	self deny: client isResponsePending.
+	self assertConnectionAnswersItsOwnQueries
 ]
 
 { #category : 'tests - unexpected messages' }
@@ -123,6 +162,33 @@ P3RequestDisciplineTest >> testOrdinaryRequestsOweExactlyOneResponseEach [
 	self assertConnectionAnswersItsOwnQueries
 ]
 
+{ #category : 'tests - abandoned responses' }
+P3RequestDisciplineTest >> testPreparedStatementAfterAbandonedResponse [
+	"A prepared statement writes its own request. If it does not first drain a response nobody read,
+	two responses are outstanding and it reads the older one as its own, answering the question
+	before the one it asked."
+
+	| statement |
+	statement := client prepare: 'SELECT $1::int4 + 1000' named: self statementName.
+	self abandonResponse.
+	self assert: (statement query: #( 1 )) data equals: #( #( 1001 ) ).
+	self assert: (statement query: #( 2 )) data equals: #( #( 1002 ) )
+]
+
+{ #category : 'tests - abandoned responses' }
+P3RequestDisciplineTest >> testPreparedStatementCloseIsSynchronised [
+	"Close is sent with Sync, so the server answers CloseComplete and ReadyForQuery and nothing is
+	left unread. Sent with Flush instead, an error would leave me waiting for a ReadyForQuery that
+	never comes while the server discards everything until a Sync."
+
+	| statement |
+	statement := client prepare: 'SELECT $1::int4' named: self statementName.
+	statement close.
+	self deny: client isResponsePending.
+	self assert: client transactionStatus equals: $I.
+	self assertConnectionAnswersItsOwnQueries
+]
+
 { #category : 'tests - writing requests' }
 P3RequestDisciplineTest >> testQueryAfterFailedDrainReconnects [
 	"Draining a response the server is not going to send can only fail, and then my connection is
@@ -137,6 +203,25 @@ P3RequestDisciplineTest >> testQueryAfterFailedDrainReconnects [
 	extraClient noteResponseRequested.
 	self assert: (extraClient query: 'SELECT 111') data equals: #( #( 111 ) ).
 	self deny: extraClient isResponsePending
+]
+
+{ #category : 'tests - abandoned responses' }
+P3RequestDisciplineTest >> testSimpleQueryAfterAbandonedPreparedStatementResponse [
+	"The same shift the other way round: a prepared statement's response is abandoned and the simple
+	queries after it must still answer their own questions."
+
+	| statement |
+	statement := client prepare: 'SELECT $1::int4 + 1000' named: self statementName.
+	[ client converter
+		mapOid: 23
+		type: #int4
+		to: [ :bytes :length :description | Warning signal: 'abandon this response' ].
+	  [ statement query: #( 1 ) ] on: Warning do: [ :warning | warning return: nil ] ]
+		ensure: [ client converter
+			mapOid: 23
+			type: #int4
+			to: #convertIntegerFrom:length:description: ].
+	self assertConnectionAnswersItsOwnQueries
 ]
 
 { #category : 'tests - writing requests' }
@@ -165,4 +250,18 @@ P3RequestDisciplineTest >> testWriterTerminatedInsideAMessageDoesNotGarbleTheNex
 	self terminateWriterOf: pool gatedAt: #nextPut:.
 	self assert: (pool withConnection: [ :p3 | (p3 query: 'SELECT 2') firstFieldOfFirstRecord ]) equals: 2 ]
 		ensure: [ pool close ]
+]
+
+{ #category : 'private' }
+P3RequestDisciplineTest >> waitForRowCount [
+	"Answer the number of rows in my table once the statement I stopped waiting for has finished on
+	the server. It keeps running there after I gave up on it, so I poll, from the connection that is
+	still open."
+
+	| deadline count |
+	deadline := DateAndTime now + 10 seconds.
+	[ count := (client query: 'SELECT count(*) FROM ' , self tableName) firstFieldOfFirstRecord.
+	  count > 0 or: [ DateAndTime now > deadline ] ] whileFalse: [
+		(Delay forMilliseconds: 200) wait ].
+	^ count
 ]

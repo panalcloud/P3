@@ -18,6 +18,19 @@ P3PreparedStatementValueTest >> rowsOf: sqlTemplate with: arguments [
 ]
 
 { #category : 'tests' }
+P3PreparedStatementValueTest >> testFailedBatchLeavesNoRows [
+	"A batch is one request. When its third row fails the first two must not stay."
+
+	| statement |
+	client execute: 'CREATE TEMP TABLE p3_batch_probe (n int4 PRIMARY KEY)'.
+	statement := client prepare: 'INSERT INTO p3_batch_probe VALUES ($1)'.
+	[ self should: [ statement executeBatch: { { 1 }. { 2 }. { 'x' }. { 4 } } ] raise: P3Error ] ensure: [ statement close ].
+	self
+		assert: (client query: 'SELECT count(*) FROM p3_batch_probe') firstFieldOfFirstRecord
+		equals: 0
+]
+
+{ #category : 'tests' }
 P3PreparedStatementValueTest >> testFractionIsRefused [
 	"A parameter text is a decimal, and most fractions have no exact decimal text."
 

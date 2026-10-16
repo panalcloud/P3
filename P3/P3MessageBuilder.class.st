@@ -154,6 +154,16 @@ P3MessageBuilder >> printDateAndTime: dateAndTime on: stream [
 ]
 
 { #category : 'printing-dispatched' }
+P3MessageBuilder >> printFloat: float on: stream [
+	"The server notation for the values that have no digits. Any other float uses the shortest digits that
+	identify it, with an exponent when needed (1.0e100), which the server reads."
+
+	float isNaN ifTrue: [ ^ stream nextPutAll: 'NaN' ].
+	float isInfinite ifTrue: [ ^ stream nextPutAll: (float > 0 ifTrue: [ 'Infinity' ] ifFalse: [ '-Infinity' ]) ].
+	float printOn: stream
+]
+
+{ #category : 'printing-dispatched' }
 P3MessageBuilder >> printGeometricObject: geometricObject on: stream [
 	"Delegate to P3GeometricObject that knows how to print itself in unescaped, raw PSQL text format"
 	
@@ -203,6 +213,13 @@ P3MessageBuilder >> printTime: time on: stream [
 	"Use ISO 8601 hh:mm:ss.s. A parameter is the value itself, so it has no SQL quotes."
 
 	self printUnquotedTime: time on: stream
+]
+
+{ #category : 'printing-dispatched' }
+P3MessageBuilder >> printUUID: uuid on: stream [
+	"The text form of a uuid, 8-4-4-4-12 hexadecimal digits"
+
+	uuid printOn: stream
 ]
 
 { #category : 'printing' }

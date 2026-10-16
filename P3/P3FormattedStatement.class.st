@@ -269,6 +269,11 @@ P3FormattedStatement >> printDateAndTime: dateAndTime on: stream [
 	stream nextPut: $'
 ]
 
+{ #category : 'printing' }
+P3FormattedStatement >> printFloat: float on: stream [
+	self printNumber: float on: stream
+]
+
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printGeometricObject: geometricObject on: stream [
 	"Delegate to P3GeometricObject that knows how to print itself in typed quoted PSQL text format"
@@ -314,13 +319,12 @@ P3FormattedStatement >> printNumber: number on: stream [
 
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printObject: object on: stream [
-	"Numbers, booleans, characters and UUIDs have an SQL text. Any other object has none:
+	"Numbers, booleans and characters have an SQL text. Any other object has none:
 	its print string is not SQL, so it is refused."
 
 	object isNumber ifTrue: [ ^ self printNumber: object on: stream ].
 	(object == true or: [ object == false ]) ifTrue: [ ^ object printOn: stream ].
 	object isCharacter ifTrue: [ ^ self printString: (String with: object) on: stream ].
-	(object isKindOf: UUID) ifTrue: [ ^ self printString: object printString on: stream ].
 	^ (P3Error cannotFormatObject: object) signal
 ]
 
@@ -374,6 +378,11 @@ P3FormattedStatement >> printTime: time on: stream [
 	stream nextPut: $'.
 	P3MessageBuilder printIsoTime: time on: stream.
 	stream nextPut: $'
+]
+
+{ #category : 'printing-dispatched' }
+P3FormattedStatement >> printUUID: uuid on: stream [
+	self printString: uuid printString on: stream
 ]
 
 { #category : 'printing-dispatched' }

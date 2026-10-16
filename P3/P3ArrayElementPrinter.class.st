@@ -46,6 +46,11 @@ P3ArrayElementPrinter >> printDateAndTime: dateAndTime on: stream [
 ]
 
 { #category : 'printing-dispatched' }
+P3ArrayElementPrinter >> printFloat: float on: stream [
+	self printQuoted: [ :out | builder printFloat: float on: out ] on: stream
+]
+
+{ #category : 'printing-dispatched' }
 P3ArrayElementPrinter >> printGeometricObject: geometricObject on: stream [
 	self printQuoted: [ :out | builder printGeometricObject: geometricObject on: out ] on: stream
 ]
@@ -99,6 +104,11 @@ P3ArrayElementPrinter >> printString: string on: stream [
 { #category : 'printing-dispatched' }
 P3ArrayElementPrinter >> printTime: time on: stream [
 	self printQuoted: [ :out | builder printUnquotedTime: time on: out ] on: stream
+]
+
+{ #category : 'printing-dispatched' }
+P3ArrayElementPrinter >> printUUID: uuid on: stream [
+	self printQuoted: [ :out | builder printUUID: uuid on: out ] on: stream
 ]
 
 { #category : 'printing-dispatched' }

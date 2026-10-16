@@ -13,11 +13,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3ConnectionPoolTest >> expectedFailures [
-	^ #( #testConfiguratorRunsAgainOnAReplacedConnection #testConnectionWithLostTransactionIsNotPooled #testError #testReleaseConnectionChecksTheConnection #testTransactionLeftOpenByNonLocalExitIsNotPooled #testTransactionLeftOpenOnSuccessIsNotPooled )
-]
-
 { #category : 'running' }
 P3ConnectionPoolTest >> setUp [
 	super setUp.

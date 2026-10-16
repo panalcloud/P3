@@ -307,6 +307,12 @@ P3Converter >> convertIntegerArrayFrom: bytes length: length description: descri
 
 { #category : 'converting' }
 P3Converter >> convertIntegerFrom: bytes length: length description: description [
+	"Read the decimal text of an integer. Digits with an optional minus sign, which is how the server
+	writes every integer type, are read straight from the bytes by #integerFrom:length:. Anything else
+	is read by Integer class>>#readFrom:base:."
+
+	bytes class == ReadStream
+		ifTrue: [ (self integerFrom: bytes length: length) ifNotNil: [ :integer | ^ integer ] ].
 	^ Integer readFrom: (self asciiStreamFor: bytes length: length) base: 10
 ]
 
@@ -604,6 +610,31 @@ P3Converter >> installConvertersFor: typeOids refusing: aBlockOrNil [
 				mapOid: oid
 				type: (P3TypeMap standard nameAt: oid ifAbsent: [ oid ])
 				to: aBlockOrNil ] ]
+]
+
+{ #category : 'converting' }
+P3Converter >> integerFrom: bytes length: length [
+	"Answer the integer written in the next length bytes of bytes, a ReadStream on a ByteArray, as
+	decimal digits with an optional minus sign, and move past them. Answer nil and leave bytes where it
+	was for any other text."
+
+	| buffer index end negative value |
+	length = 0 ifTrue: [ ^ nil ].
+	buffer := bytes originalContents.
+	index := bytes position + 1.
+	end := bytes position + length.
+	negative := (buffer at: index) = 45 "$-".
+	negative ifTrue: [ index := index + 1 ].
+	index > end ifTrue: [ ^ nil ].
+	value := 0.
+	index to: end do: [ :each | | digit |
+		digit := (buffer at: each) - 48 "$0".
+		(digit >= 0 and: [ digit <= 9 ]) ifFalse: [ ^ nil ].
+		value := value * 10 + digit ].
+	bytes skip: length.
+	^ negative
+		ifTrue: [ value negated ]
+		ifFalse: [ value ]
 ]
 
 { #category : 'accessing' }

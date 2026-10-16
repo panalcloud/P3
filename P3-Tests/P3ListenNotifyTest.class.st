@@ -128,6 +128,18 @@ P3ListenNotifyTest >> testChannelNameMustNotBeEmpty [
 	self assert: client listeningChannels isEmpty
 ]
 
+{ #category : 'tests - logging' }
+P3ListenNotifyTest >> testDroppedNotificationsAreLogged [
+	| events |
+	client notificationLimit: 2.
+	client listen: self channelName.
+	1 to: 5 do: [ :each | self send: each printString ].
+	events := self logEventsOf: P3NotificationsDroppedEvent during: [ client query: 'SELECT 1' ].
+	self assert: events size equals: 3.
+	self assert: events last droppedCount equals: 3.
+	self assert: events last limit equals: 2
+]
+
 { #category : 'tests - notification' }
 P3ListenNotifyTest >> testEmptyPayloadIsEmptyString [
 	| notifications |
@@ -192,6 +204,29 @@ P3ListenNotifyTest >> testListeningChannelsMatchTheServer [
 	self assert: self serverListeningChannels equals: client listeningChannels
 ]
 
+{ #category : 'tests - logging' }
+P3ListenNotifyTest >> testLogEventsPrintOnOneLine [
+	| events |
+	client listen: self channelName.
+	self send: 'printed'.
+	events := self logEventsOf: P3LogEvent during: [ client query: 'SELECT 1'. client unlisten: self channelName ].
+	events do: [ :each | self deny: (each printString includesAny: String crlf) ].
+	self assert: (events contains: [ :each | (each printString includesSubstring: 'printed') ]).
+	self assert: (events contains: [ :each | (each printString includesSubstring: 'Unlisten') ])
+]
+
+{ #category : 'tests - logging' }
+P3ListenNotifyTest >> testNotificationReceivedIsLogged [
+	| events |
+	client listen: self channelName.
+	self send: 'logged'.
+	events := self logEventsOf: P3NotificationReceivedEvent during: [ client query: 'SELECT 1' ].
+	self assert: events size equals: 1.
+	self assert: events first notification payload equals: 'logged'.
+	self assert: events first notification channel equals: self channelName.
+	self assert: events first session equals: client session
+]
+
 { #category : 'tests - api' }
 P3ListenNotifyTest >> testNotifyChannelIsAParameter [
 	| channel notifications |
@@ -216,6 +251,30 @@ P3ListenNotifyTest >> testNotifyPassesThePayloadAsAParameter [
 	self assert: notifications first payload equals: payload.
 	self assert: (notifier query: 'SELECT count(*) FROM p3_listen_notify_victim') firstFieldOfFirstRecord equals: 0 ]
 		ensure: [ notifier execute: 'DROP TABLE IF EXISTS p3_listen_notify_victim' ]
+]
+
+{ #category : 'tests - queue' }
+P3ListenNotifyTest >> testQueueDropsTheOldestBeyondItsLimit [
+	| notifications |
+	client notificationLimit: 3.
+	client listen: self channelName.
+	1 to: 5 do: [ :each | self send: each printString ].
+	notifications := self received.
+	self assert: (notifications collect: [ :each | each payload ]) equals: #( '3' '4' '5' ).
+	self assert: client droppedNotificationCount equals: 2
+]
+
+{ #category : 'tests - queue' }
+P3ListenNotifyTest >> testQueueLimitDefault [
+	self assert: client notificationLimit equals: 10000.
+	self assert: client droppedNotificationCount equals: 0
+]
+
+{ #category : 'tests - queue' }
+P3ListenNotifyTest >> testQueueLimitMustBePositive [
+	self should: [ client notificationLimit: 0 ] raise: Error.
+	self should: [ client notificationLimit: nil ] raise: Error.
+	self assert: client notificationLimit equals: 10000
 ]
 
 { #category : 'tests - notification' }

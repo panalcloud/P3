@@ -13,11 +13,6 @@ P3FormattedStatementPlaceholderTest >> assertTemplate: aTemplate with: arguments
 	self assert: (self boundSqlOf: aTemplate with: arguments) equals: expectedSql
 ]
 
-{ #category : 'accessing' }
-P3FormattedStatementPlaceholderTest >> expectedFailures [
-	^ #( #testArgumentWithoutSqlTextIsRefused )
-]
-
 { #category : 'tests-literal' }
 P3FormattedStatementPlaceholderTest >> testArgumentWithoutSqlTextIsRefused [
 	"The print string of an arbitrary object is not SQL, so it is not spliced into the statement."

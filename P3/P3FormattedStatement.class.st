@@ -314,11 +314,14 @@ P3FormattedStatement >> printNumber: number on: stream [
 
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printObject: object on: stream [
-	"Numbers have their own SQL text, see #printNumber:on:.
-	Any other object uses the standard print string representation"
+	"Numbers, booleans, characters and UUIDs have an SQL text. Any other object has none:
+	its print string is not SQL, so it is refused."
 
 	object isNumber ifTrue: [ ^ self printNumber: object on: stream ].
-	object printOn: stream
+	(object == true or: [ object == false ]) ifTrue: [ ^ object printOn: stream ].
+	object isCharacter ifTrue: [ ^ self printString: (String with: object) on: stream ].
+	(object isKindOf: UUID) ifTrue: [ ^ self printString: object printString on: stream ].
+	^ (P3Error cannotFormatObject: object) signal
 ]
 
 { #category : 'printing' }

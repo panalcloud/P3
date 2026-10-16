@@ -34,6 +34,13 @@ P3Error class >> cannotConvertTypeOid: typeOid [
 ]
 
 { #category : 'accessing' }
+P3Error class >> cannotFormatObject: object [
+	^ self new 
+		info: { $C->'P3060'. $M->('Cannot write {1} as SQL text' format: { object class name }) } asDictionary; 
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> closeCompleteExpected [
 	^ self new 
 		info: { $C->'P3005'. $M->'CloseComplete message expected' } asDictionary; 

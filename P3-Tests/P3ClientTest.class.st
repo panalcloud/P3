@@ -53,6 +53,11 @@ P3ClientTest >> benchmark1Size [
 	^ 10000
 ]
 
+{ #category : 'accessing' }
+P3ClientTest >> expectedFailures [
+	^ #( #testMessageBufferReleasesTheMemoryOfOneLargeMessage #testServerGettersWaitForARunningRequest #testServerVersionComparisonReadsOddVersionStrings #testUnixSocketHostIsADirectoryOrTheSocketFile )
+]
+
 { #category : 'benchmarking' }
 P3ClientTest >> runAllTests [
 	"Runs all tests on the same connection/session"
@@ -544,6 +549,25 @@ P3ClientTest >> testLineSegmentConversion [
 ]
 
 { #category : 'tests' }
+P3ClientTest >> testMessageBufferReleasesTheMemoryOfOneLargeMessage [
+	| buffer small |
+	buffer := P3MessageBuffer new.
+	buffer initializeForSize: 100.
+	small := buffer rawByteBuffer.
+	buffer initializeForSize: 200.
+	self assert: buffer rawByteBuffer == small.
+	buffer initializeForSize: 3 * 1024 * 1024.
+	self assert: buffer capacity >= (3 * 1024 * 1024).
+	self assert: buffer size equals: 3 * 1024 * 1024.
+	buffer initializeForSize: 50.
+	self assert: buffer capacity < P3MessageBuffer retainedCapacity.
+	self assert: buffer size equals: 50.
+	buffer initializeForSize: 2 * 1024 * 1024.
+	buffer initializeForSize: P3MessageBuffer retainedCapacity.
+	self assert: buffer capacity < (2 * 1024 * 1024)
+]
+
+{ #category : 'tests' }
 P3ClientTest >> testMultiStatement [
 	| result |
 	client execute: 'DROP TABLE IF EXISTS table1'.
@@ -676,6 +700,31 @@ P3ClientTest >> testRetrySettings [
 	probe retryCount: 2; retryDelay: 2.
 	self assert: probe retryCount equals: 2.
 	self assert: probe retryDelay equals: 2
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testServerGettersWaitForARunningRequest [
+	| order finished |
+	order := OrderedCollection new.
+	finished := Semaphore new.
+	[ [ client query: 'SELECT pg_sleep(1)'. order add: #request ]
+		ensure: [ finished signal ] ] fork.
+	(Delay forMilliseconds: 300) wait.
+	client serverEncoding.
+	order add: #getter.
+	finished waitTimeoutMilliseconds: 10000.
+	self assert: order asArray equals: #( #request #getter )
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testServerVersionComparisonReadsOddVersionStrings [
+	| properties |
+	properties := client instVarNamed: 'properties'.
+	#( ('18beta1' 18 0 true) ('18beta1' 17 5 true) ('18beta1' 19 0 false) ('18' 18 0 true) ('18' 18 1 false)
+		('beta' 1 0 false) ('16.3' 16 3 true) ('16.3' 16 4 false) ('17.2 (Debian)' 17 2 true) )
+		do: [ :each |
+			properties at: 'server_version' put: each first.
+			self assert: (client isServerVersionAtLeastMajor: (each at: 2) minor: (each at: 3)) equals: (each at: 4) ]
 ]
 
 { #category : 'tests' }
@@ -876,6 +925,17 @@ P3ClientTest >> testTypeModifierIsSigned [
 	descriptions := (client prepare: 'SELECT 1::int4 AS n, ''x''::varchar(18) AS v') fieldDescriptions.
 	self assert: descriptions first typeModifier equals: -1.
 	self assert: descriptions second typeModifier equals: 22
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testUnixSocketHostIsADirectoryOrTheSocketFile [
+	| directory |
+	directory := FileLocator temp resolve.
+	client host: directory fullName; port: 5433.
+	self assert: client isUsingUnixSocket.
+	self assert: client unixSocketFile fullName equals: (directory / '.s.PGSQL.5433') fullName.
+	client host: (directory / 'some-socket-file') fullName.
+	self assert: client unixSocketFile fullName equals: (directory / 'some-socket-file') fullName
 ]
 
 { #category : 'tests' }

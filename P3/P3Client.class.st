@@ -993,6 +993,7 @@ P3Client >> loadEnums [
 
 { #category : 'private - logging' }
 P3Client >> logBinding: statement inputValues: inputValues [
+	P3LogEvent hasSubscribers ifFalse: [ ^ self ].
 	(self newLogEvent: P3StatementBoundEvent)
 		statement: statement;
 		inputValues: inputValues;
@@ -1026,6 +1027,7 @@ P3Client >> logError: error [
 
 { #category : 'private - logging' }
 P3Client >> logPreparedStatement: statement query: query [
+	P3LogEvent hasSubscribers ifFalse: [ ^ self ].
 	(self newLogEvent: P3StatementPreparedEvent)
 		statement: statement;
 		query: query;
@@ -1034,6 +1036,7 @@ P3Client >> logPreparedStatement: statement query: query [
 
 { #category : 'private - logging' }
 P3Client >> logQuery: query [
+	P3LogEvent hasSubscribers ifFalse: [ ^ self ].
 	(self newLogEvent: P3QueryWrittenEvent)
 		query: query;
 		emit.
@@ -1042,7 +1045,10 @@ P3Client >> logQuery: query [
 
 { #category : 'private - logging' }
 P3Client >> logResult: result [
+	"The start of the request is removed in any case, so that a later result is not timed from it"
+
 	| duration |
+	P3LogEvent hasSubscribers ifFalse: [ ^ properties removeKey: #query_started ifAbsent: [ ] ].
 	duration := properties 
 		at: #query_started 
 		ifPresent: [ :initialMilliseconds | Time millisecondsSince: initialMilliseconds ]

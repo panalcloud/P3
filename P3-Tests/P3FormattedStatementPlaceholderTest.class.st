@@ -15,7 +15,7 @@ P3FormattedStatementPlaceholderTest >> assertTemplate: aTemplate with: arguments
 
 { #category : 'accessing' }
 P3FormattedStatementPlaceholderTest >> expectedFailures [
-	^ #( #testArgumentWithoutSqlTextIsRefused #testDifferentDollarTagDoesNotCloseBody #testDollarInsideIdentifierIsKept #testEscapedQuoteDoesNotEndStringLiteral #testNestedBlockCommentEndsAtOutermostCloser #testPlaceholderAfterLiteralIsReplaced #testPlaceholderInBlockCommentIsKept #testPlaceholderInDollarQuotedBodyIsKept #testPlaceholderInEscapeStringLiteralIsKept #testPlaceholderInLineCommentIsKept #testPlaceholderInQuotedIdentifierIsKept #testPlaceholderInStringLiteralIsKept #testPlaceholderInTaggedDollarQuotedBodyIsKept #testPlaceholderWithoutArgumentIsAP3Error #testQuoteInsideDollarQuotedBodyDoesNotStartLiteral #testServerAcceptsCommentsHoldingPlaceholders #testServerKeepsIdentifierWithDollar #testServerReadsDollarQuotedBodyUnchanged #testServerReadsJsonTextUnchanged #testServerReadsStringLiteralUnchanged )
+	^ #( #testArgumentWithoutSqlTextIsRefused )
 ]
 
 { #category : 'tests-literal' }

@@ -41,6 +41,13 @@ P3Error class >> closeCompleteExpected [
 ]
 
 { #category : 'accessing' }
+P3Error class >> noArgumentForPlaceholder: position [
+	^ self new 
+		info: { $C->'P3062'. $M->('No argument for placeholder ${1}' format: { position }) } asDictionary; 
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> noDataExpected [
 	^ self new 
 		info: { $C->'P3001'. $M->'NoData message expected' } asDictionary; 

@@ -31,17 +31,16 @@ Class {
 
 { #category : 'private' }
 P3FormattedStatement >> bind: arguments [
-	"Build and return the actual SQL statement by splicing in the arguments for all placeholders in the template"
-	
-	^ String streamContents: [ :out | | readStream |
-			readStream := self source readStream.
-			[ readStream atEnd ] whileFalse: [ | char |
-				(char := readStream next) = $$
-					ifTrue: [ | index argument |
-						index := Integer readFrom: readStream.
-						argument := arguments at: index.
-						argument p3PrintUsing: self on: out ]
-					ifFalse: [ out nextPut: char ] ] ]
+	"Build and return the actual SQL statement by splicing in the arguments for all placeholders in the template.
+	Only a $ followed by digits outside string literals, quoted identifiers, dollar quoted strings,
+	comments and identifiers is a placeholder. Everything else is copied as it is."
+
+	| text |
+	text := self source.
+	^ String streamContents: [ :out | | index |
+		index := 1.
+		[ index <= text size ] whileTrue: [
+			index := self copyTokenFrom: text at: index to: out arguments: arguments ] ]
 ]
 
 { #category : 'initialization' }
@@ -51,6 +50,149 @@ P3FormattedStatement >> client: aP3Client [
 
 { #category : 'public' }
 P3FormattedStatement >> close [
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> copyBlockCommentFrom: text at: start to: out [
+	"Copy a /* */ comment. These comments nest. An unfinished comment runs to the end of the text.
+	Answer the index after the comment."
+
+	| index depth |
+	out nextPutAll: '/*'.
+	index := start + 2.
+	depth := 1.
+	[ index <= text size and: [ depth > 0 ] ] whileTrue: [
+		| char next |
+		char := text at: index.
+		next := text at: index + 1 ifAbsent: [ nil ].
+		(char = $/ and: [ next = $* ])
+			ifTrue: [
+				depth := depth + 1.
+				out nextPutAll: '/*'.
+				index := index + 2 ]
+			ifFalse: [
+				(char = $* and: [ next = $/ ])
+					ifTrue: [
+						depth := depth - 1.
+						out nextPutAll: '*/'.
+						index := index + 2 ]
+					ifFalse: [
+						out nextPut: char.
+						index := index + 1 ] ] ].
+	^ index
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> copyDollarTokenFrom: text at: start to: out arguments: arguments [
+	"The token at start begins with a $. It is a placeholder when digits follow, the opening tag of a
+	dollar quoted string when a tag and a second $ follow, and a plain character otherwise.
+	Answer the index after the token."
+
+	| index next close |
+	next := text at: start + 1 ifAbsent: [ nil ].
+	(next notNil and: [ next isDigit ])
+		ifTrue: [ | position |
+			index := start + 1.
+			[ index <= text size and: [ (text at: index) isDigit ] ] whileTrue: [ index := index + 1 ].
+			position := (text copyFrom: start + 1 to: index - 1) asInteger.
+			(position between: 1 and: arguments size)
+				ifFalse: [ ^ (P3Error noArgumentForPlaceholder: position) signal ].
+			(arguments at: position) p3PrintUsing: self on: out.
+			^ index ].
+	index := start + 1.
+	(next notNil and: [ self isIdentifierStart: next ])
+		ifTrue: [
+			[ index <= text size and: [ self isTagPart: (text at: index) ] ] whileTrue: [ index := index + 1 ] ].
+	(index <= text size and: [ (text at: index) = $$ ])
+		ifFalse: [
+			out nextPut: $$.
+			^ start + 1 ].
+	"The tag is the opening $tag$. The string ends at the next equal tag."
+	close := text indexOfSubCollection: (text copyFrom: start to: index) startingAt: index + 1.
+	close = 0 ifTrue: [
+		out nextPutAll: (text copyFrom: start to: text size).
+		^ text size + 1 ].
+	out nextPutAll: (text copyFrom: start to: close + (index - start)).
+	^ close + (index - start) + 1
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> copyLineCommentFrom: text at: start to: out [
+	"Copy a -- comment up to, but not including, the end of the line. Answer the index of the line end."
+
+	| index |
+	index := start.
+	[ index <= text size and: [ (text at: index) ~= Character lf and: [ (text at: index) ~= Character cr ] ] ]
+		whileTrue: [
+			out nextPut: (text at: index).
+			index := index + 1 ].
+	^ index
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> copyQuotedFrom: text at: start to: out escapes: aBoolean [
+	"Copy a literal or a quoted identifier. A doubled quote stays inside. When aBoolean is true,
+	a backslash escapes the next character, as in an E'..' string. Answer the index after the closing quote."
+
+	| quote index char |
+	quote := text at: start.
+	out nextPut: quote.
+	index := start + 1.
+	[ index <= text size ] whileTrue: [
+		char := text at: index.
+		out nextPut: char.
+		index := index + 1.
+		(aBoolean and: [ char = $\ ])
+			ifTrue: [
+				index <= text size ifTrue: [
+					out nextPut: (text at: index).
+					index := index + 1 ] ]
+			ifFalse: [
+				char = quote ifTrue: [
+					(index <= text size and: [ (text at: index) = quote ])
+						ifTrue: [
+							out nextPut: quote.
+							index := index + 1 ]
+						ifFalse: [ ^ index ] ] ] ].
+	^ index
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> copyTokenFrom: text at: index to: out arguments: arguments [
+	"Copy the token that starts at index to out, writing the argument for a placeholder.
+	Answer the index of the first character after the token."
+
+	| char next |
+	char := text at: index.
+	next := text at: index + 1 ifAbsent: [ nil ].
+	(char = $' or: [ char = $" ])
+		ifTrue: [ ^ self copyQuotedFrom: text at: index to: out escapes: false ].
+	(char = $- and: [ next = $- ])
+		ifTrue: [ ^ self copyLineCommentFrom: text at: index to: out ].
+	(char = $/ and: [ next = $* ])
+		ifTrue: [ ^ self copyBlockCommentFrom: text at: index to: out ].
+	char = $$
+		ifTrue: [ ^ self copyDollarTokenFrom: text at: index to: out arguments: arguments ].
+	(self isIdentifierStart: char)
+		ifTrue: [ ^ self copyWordFrom: text at: index to: out ].
+	out nextPut: char.
+	^ index + 1
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> copyWordFrom: text at: start to: out [
+	"Copy an identifier or a keyword. A $ and digits belong to it. A lone E or e directly before a
+	quote starts an escape string, in which a backslash escapes the next character.
+	Answer the index after the token."
+
+	| index word |
+	index := start.
+	[ index <= text size and: [ self isIdentifierPart: (text at: index) ] ] whileTrue: [ index := index + 1 ].
+	word := text copyFrom: start to: index - 1.
+	out nextPutAll: word.
+	(word size = 1 and: [ word first asLowercase = $e and: [ index <= text size and: [ (text at: index) = $' ] ] ])
+		ifTrue: [ ^ self copyQuotedFrom: text at: index to: out escapes: true ].
+	^ index
 ]
 
 { #category : 'public' }
@@ -68,6 +210,23 @@ P3FormattedStatement >> executeBatch: argumentsCollection [
 	returning the collection of results"
 
 	^ argumentsCollection collect: [ :each | self execute: each ]
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> isIdentifierPart: aCharacter [
+	^ (self isIdentifierStart: aCharacter) or: [ aCharacter isDigit or: [ aCharacter = $$ ] ]
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> isIdentifierStart: aCharacter [
+	^ aCharacter isLetter or: [ aCharacter = $_ or: [ aCharacter asInteger > 127 ] ]
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> isTagPart: aCharacter [
+	"A dollar quote tag has no $ in it."
+
+	^ (self isIdentifierStart: aCharacter) or: [ aCharacter isDigit ]
 ]
 
 { #category : 'printing-dispatched' }

@@ -158,6 +158,15 @@ P3Error class >> statementClosed: statementName [
 ]
 
 { #category : 'accessing' }
+P3Error class >> statementCompletedAfterTimeout [
+	"The read timed out, but the statement completed before the cancel reached the server. Its result was not read."
+
+	^ self new
+		info: { $C->'P3054'. $M->'The statement completed after the read timed out, its result was discarded' } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> unexpectedMessage: tag [
 	"A message that cannot be placed in the response being read: the message stream is out of step."
 

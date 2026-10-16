@@ -23,11 +23,6 @@ P3CancelTest >> errorCodeOf: aBlock [
 	^ [ aBlock value. nil ] on: P3Error do: [ :error | error code ]
 ]
 
-{ #category : 'accessing' }
-P3CancelTest >> expectedFailures [
-	^ #( #testCancelRequestMessageCarriesTheBackendKeys #testCancelStopsARunningStatement #testCancelWithoutAConnectionAnswersFalse #testCancelWithoutARunningRequestAnswersFalse #testConnectTimeoutAndReadTimeoutAreSeparate #testConnectTimeoutBoundsReachingAServer #testConnectionUsesTcpKeepAlive #testHandshakeIsBoundedByTheConnectTimeout #testReadTimeoutCancelsTheStatementAndKeepsTheConnection #testReadTimeoutInsideATransactionLeavesItFailedNotLost #testReadTimeoutStopsTheStatementOnTheServer #testStatementTimeoutIsSetByTheStartup #testThereIsNoStatementTimeoutByDefault #testTimeoutAfterTheStatementCompletedIsNotReportedAsATimeout )
-]
-
 { #category : 'private' }
 P3CancelTest >> newClientWith: aBlock [
 	"A client with the settings of aBlock, not yet connected."

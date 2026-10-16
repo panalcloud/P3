@@ -8,11 +8,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3MessageBufferTest >> expectedFailures [
-	^ #( #testCompleteMessageIsNotPartial #testNextCompleteReadClearsPartial #testNothingReadIsNotPartial #testReadThatStopsInsideAMessageIsPartial #testTimeoutBeforeTheFirstByteIsNotPartial )
-]
-
 { #category : 'tests' }
 P3MessageBufferTest >> testCompleteMessageIsNotPartial [
 	| buffer |

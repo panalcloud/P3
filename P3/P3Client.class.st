@@ -160,6 +160,13 @@ P3Client >> authenticationTypes [
 		10 -> #SASL } asDictionary
 ]
 
+{ #category : 'accessing' }
+P3Client >> backendProcessId [
+	"The process id of the server side of my connection, or nil when I am not connected."
+
+	^ properties at: 'backend_process_id' ifAbsent: [ nil ]
+]
+
 { #category : 'protocol' }
 P3Client >> basicRunExtendedQueryResults: fieldDescriptions [
 	"Read the response to a request of Bind and Execute messages ended by one Sync: one result per
@@ -195,6 +202,42 @@ P3Client >> beThreadSafe [
 	"Configure me so that I can be safely used from multiple threads/processes during important operations"
 	
 	access := Monitor new
+]
+
+{ #category : 'cancelling' }
+P3Client >> cancel [
+	"Ask the server to stop the statement my connection is running. The request goes over a new connection,
+	because mine is busy reading the answer, so I do not wait for my monitor and any process can call me.
+	Answer whether a request was sent, which is not whether it had an effect: the server gives no answer,
+	and ignores the request when the statement has finished by then. A statement that is stopped fails
+	with a P3Error 57014 and leaves my connection usable. I signal when the server cannot be reached.
+
+	The request names my server session, not a statement. Sent when the statement it was meant for has
+	just finished, it stops whatever the session runs when it arrives, which can be the next statement.
+	So nothing is sent while I owe no response, and a caller should only cancel what it knows is running."
+
+	| stream request |
+	(properties includesKey: 'backend_secret_key') ifFalse: [ ^ false ].
+	self isResponsePending ifFalse: [ ^ false ].
+	request := self cancelRequestMessage.
+	stream := self newSocketStream.
+	[ self isSSL ifTrue: [ stream := self secureStreamOn: stream ].
+	stream nextPutAll: request; flush.
+	"The server closes the connection once it has the request."
+	[ stream next ] on: Error do: [ :ignored | ] ]
+		ensure: [ [ stream close ] on: Error do: [ :ignored | ] ].
+	^ true
+]
+
+{ #category : 'cancelling' }
+P3Client >> cancelRequestMessage [
+	"The CancelRequest for the statement my connection runs: its length, the code 1234 5678, and the
+	process id and secret key the server gave me at startup."
+
+	^ ByteArray streamContents: [ :out |
+		out nextPutAll: #[ 0 0 0 16 4 210 22 46 ].
+		out nextPutAll: ((properties at: 'backend_process_id') asByteArrayOfSize: 4).
+		out nextPutAll: ((properties at: 'backend_secret_key') asByteArrayOfSize: 4) ]
 ]
 
 { #category : 'private' }
@@ -272,13 +315,15 @@ P3Client >> compactUrl [
 { #category : 'public' }
 P3Client >> connect [
 	"Connect me to a PostgreSQL database on a new connection. 
-	Run the authentication and startup protocols. Configure the session."
+	Run the authentication and startup protocols. Configure the session.
+	Up to the end of the startup, waiting for the server is bounded by #connectTimeout, then by #timeout."
 
 	self critical: [ 
 		self
 			open;
 			connectInternal;
 			clearSSL;
+			startReadTimeout;
 			logConnected ]
 ]
 
@@ -297,7 +342,8 @@ P3Client >> connectInternal [
 { #category : 'public' }
 P3Client >> connectSSL [
 	"Connect me to a PostgreSQL database over a new encrypted SSL connection. 
-	Run the authentication and startup protocols. Configure the session."
+	Run the authentication and startup protocols. Configure the session.
+	Up to the end of the startup, waiting for the server is bounded by #connectTimeout, then by #timeout."
 
 	self critical: [
 		self
@@ -305,7 +351,21 @@ P3Client >> connectSSL [
 			upgradeToSSL;
 			connectInternal;
 			setSSL;
+			startReadTimeout;
 			logConnected ]
+]
+
+{ #category : 'accessing' }
+P3Client >> connectTimeout [
+	"Return the timeout in seconds for resolving the host name and reaching the server, the default being
+	10 seconds. It is separate from #timeout, which bounds waiting for the server once connected."
+
+	^ settings at: #connectTimeout ifAbsent: [ 10 ]
+]
+
+{ #category : 'accessing' }
+P3Client >> connectTimeout: seconds [
+	settings at: #connectTimeout put: seconds
 ]
 
 { #category : 'accessing' }
@@ -504,6 +564,34 @@ P3Client >> format: anSQLTemplateString [
 		client: self;
 		sql: anSQLTemplateString;
 		yourself
+]
+
+{ #category : 'private' }
+P3Client >> giveUpReading: aNetworkError [
+	"The server did not answer in time, or the connection failed, while I read a response.
+
+	A timeout that stopped between two messages leaves the connection in step, and the server may still be
+	running the statement: ask it to stop with #cancel, then read what it sends back, so the connection stays
+	usable. When that is the error of a cancelled statement, the timeout is passed on: the statement did not
+	run. When the statement had finished before the cancel arrived, its response says so, and reporting a
+	timeout would tell the caller that it did not run: I signal that it completed, or the error it failed with.
+	Every other failure, and a timeout inside a message, cannot be read on, so I close."
+
+	| previous outcome |
+	(aNetworkError isKindOf: ConnectionTimedOut)
+		ifFalse: [ ^ self closeAfterFailure ].
+	message isPartial ifTrue: [ ^ self closeAfterFailure ].
+	([ self cancel ] on: Error do: [ :error | false ])
+		ifFalse: [ ^ self closeAfterFailure ].
+	previous := discardedError.
+	discardedError := nil.
+	self discardResponseOrClose.
+	outcome := discardedError.
+	discardedError := outcome ifNil: [ previous ].
+	self isConnected ifFalse: [ ^ self ].
+	outcome ifNil: [ ^ P3Error statementCompletedAfterTimeout signal ].
+	outcome code = '57014' ifTrue: [ ^ self ].
+	^ (P3Error new info: outcome info; yourself) signal
 ]
 
 { #category : 'private - authentication' }
@@ -831,6 +919,38 @@ P3Client >> newMessageBuilder [
 ]
 
 { #category : 'private' }
+P3Client >> newSocketStream [
+	"A new socket stream to the server, not yet speaking the protocol, with TCP keepalive on. Reaching the
+	server and its handshake are bounded by #connectTimeout, see #connect for when #timeout takes over."
+
+	| stream |
+	stream := self isUsingUnixSocket
+		ifTrue: [ ZdcSocketStream on: (ZnNetworkingUtils default unixSocketOnFile: self host asFileReference) ]
+		ifFalse: [
+			self newTcpSocketStream in: [ :tcp |
+				tcp socket setOption: 'SO_KEEPALIVE' value: true.
+				tcp ] ].
+	stream timeout: self connectTimeout.
+	^ stream
+]
+
+{ #category : 'private' }
+P3Client >> newTcpSocketStream [
+	| stream address |
+	stream := ZdcSocketStream on: Socket newTCP.
+	stream timeout: self connectTimeout.
+	[ address := NetNameResolver addressForName: self host timeout: self connectTimeout.
+	(address isNil or: [ address = SocketAddress zero ])
+		ifTrue: [ ^ NameLookupFailure signalFor: self host ].
+	stream connectTo: address port: self port ]
+		on: Error
+		do: [ :error |
+			[ stream close ] on: Error do: [ :ignored | ].
+			error pass ].
+	^ stream
+]
+
+{ #category : 'private' }
 P3Client >> noteDiscardedError [
 	"Remember and log an ErrorResponse read while discarding a response. When I am recovering from a
 	failure already being reported it is redundant, but when I am draining a response nobody read it is
@@ -875,13 +995,7 @@ P3Client >> open [
 	"Open my connection with the server (do not yet #connect)"
 	
 	self close.
-	connection := self isUsingUnixSocket
-		ifTrue: [ | unixSocket |
-			unixSocket := ZnNetworkingUtils default unixSocketOnFile: self host asFileReference.
-			ZdcSocketStream on: unixSocket]
-		ifFalse: [ 
-			ZdcSocketStream openConnectionToHostNamed: self host port: self port ].
-	connection timeout: self timeout.
+	connection := self newSocketStream.
 	message := P3MessageBuffer new
 ]
 
@@ -1244,11 +1358,12 @@ P3Client >> readResponse: block [
 	re-signal. A failure the server reported has already been read up to ReadyForQuery, which is why I
 	ask #isResponsePending instead of assuming.
 
-	A network failure is different: draining would wait on the same broken socket, so close instead."
+	A network failure is different: draining would wait another full timeout on the same silent socket,
+	and the server may still be executing. See #giveUpReading:."
 
 	^ [ [ block value ]
 		on: NetworkError
-		do: [ :error | self closeAfterFailure. error pass ] ]
+		do: [ :error | self giveUpReading: error. error pass ] ]
 		on: Error
 		do: [ :error |
 			self isResponsePending ifTrue: [ self discardResponseOrClose ].
@@ -1469,6 +1584,20 @@ P3Client >> scramSHA256 [
 ]
 
 { #category : 'private' }
+P3Client >> secureStreamOn: aSocketStream [
+	"Ask the server for TLS on aSocketStream, a connection that did not send anything yet, and answer
+	the encrypted stream."
+
+	| reply |
+	
+	aSocketStream nextPutAll: #[ 0 0 0 8 ] , self sslRequestMessage; flush.
+	reply := aSocketStream next asCharacter.
+	reply = $S
+		ifFalse: [ ^ P3Error postgreSQLServerDidNotHonorSSLConnectionRequest signal ].
+	^ (ZdcSecureSocketStream on: aSocketStream socket) connect; yourself
+]
+
+{ #category : 'private' }
 P3Client >> sendRequest: aBlock [
 	"Write one complete request by evaluating aBlock, the server owes me one response for it.
 
@@ -1559,6 +1688,13 @@ P3Client >> sslRequestMessage [
 	^ #[4 210 22 47] "1234 5678"
 ]
 
+{ #category : 'private' }
+P3Client >> startReadTimeout [
+	"The session is established: from now on waiting for the server is bounded by #timeout."
+
+	connection timeout: self timeout
+]
+
 { #category : 'private messages' }
 P3Client >> startupMessage [
 	^ ByteArray streamContents: [ :out |
@@ -1571,6 +1707,9 @@ P3Client >> startupMessage [
 			self startupOptions ifNotNil: [
 				out nextPutAll: (self asCString: 'options').
 				out nextPutAll: (self asCString: self startupOptions) ].
+			self statementTimeout ifNotNil: [ :seconds |
+				out nextPutAll: (self asCString: 'statement_timeout').
+				out nextPutAll: (self asCString: (seconds * 1000) rounded asString) ].
 			out nextPut: 0 ]
 ]
 
@@ -1590,6 +1729,22 @@ P3Client >> statePrintString [
 ]
 
 { #category : 'accessing' }
+P3Client >> statementTimeout [
+	"Return the seconds after which the server stops a statement, or nil when it does not."
+
+	^ settings at: #statementTimeout ifAbsent: [ nil ]
+]
+
+{ #category : 'accessing' }
+P3Client >> statementTimeout: seconds [
+	"Have the server stop any statement that runs longer than seconds, with a P3Error 57014 that leaves my
+	connection usable. It is sent with the startup, so it holds for connections opened after this call.
+	Nil, the default, sets no limit."
+
+	settings at: #statementTimeout put: seconds
+]
+
+{ #category : 'accessing' }
 P3Client >> takeNotifications [
 	"Answer the NOTIFYs collected so far and forget them, so each one is handled once. Under my monitor,
 	because a reader process adds to the same collection."
@@ -1603,7 +1758,10 @@ P3Client >> takeNotifications [
 
 { #category : 'accessing' }
 P3Client >> timeout [
-	"Return the timeout in seconds I (want to) use, the default being 10 seconds."
+	"Return the timeout in seconds I (want to) use when waiting for the server once connected, the default
+	being 10 seconds. A statement that takes longer is cancelled and the connection kept, see #giveUpReading:.
+	Reaching the server is bounded by #connectTimeout. For long running work, raise this and let
+	#statementTimeout: bound statements on the server."
 	
 	^ settings at: #timeout ifAbsentPut: [ 10 ]
 ]
@@ -1643,16 +1801,7 @@ P3Client >> transactionStatus [
 
 { #category : 'protocol' }
 P3Client >> upgradeToSSL [
-	| reply |
-	self writeMessage: self sslRequestMessage.
-	reply := connection next asCharacter.
-	reply = $S
-		ifTrue: [ 
-			connection := ZdcSecureSocketStream on: connection socket.
-			connection connect ]
-		ifFalse: [ 
-			P3Error postgreSQLServerDidNotHonorSSLConnectionRequest signal ]
-
+	connection := self secureStreamOn: connection
 ]
 
 { #category : 'accessing' }

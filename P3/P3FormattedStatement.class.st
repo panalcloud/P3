@@ -238,14 +238,14 @@ P3FormattedStatement >> printBitString: bitString on: stream [
 
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printByteArray: byteArray on: stream [
-	"Use the bytea Hex Format for bytes (ByteArray),
-	as in '\xDEADBEEF'"
-	
+	"Use the bytea Hex Format for bytes (ByteArray), as in E'\\xDEADBEEF'.
+	The backslash is doubled, so the text reads the same whatever the standard_conforming_strings setting is."
+
 	| hex |
-	stream nextPutAll: '''\x'.
+	stream nextPutAll: 'E''\\x'.
 	hex := '0123456789ABCDEF'.
-	byteArray do: [ :byte | 
-		stream 
+	byteArray do: [ :byte |
+		stream
 			nextPut: (hex at: (byte bitShift: -4) + 1);
 			nextPut: (hex at: (byte bitAnd: 15) + 1) ].
 	stream nextPut: $'
@@ -350,11 +350,16 @@ P3FormattedStatement >> printSigned: numberText on: stream [
 
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printString: string on: stream [
-	"For strings use single quotes and the doubling of single quotes when they are part of the string"
-	
+	"For strings use single quotes and the doubling of single quotes when they are part of the string.
+	A string with a backslash is written as an E'..' string with the backslash doubled, which reads the
+	same whatever the standard_conforming_strings setting is."
+
+	| hasBackslash |
+	hasBackslash := string includes: $\.
+	hasBackslash ifTrue: [ stream nextPut: $E ].
 	stream nextPut: $'.
 	string do: [ :each |
-		each = $' ifTrue: [ stream nextPut: $' ].
+		(each = $' or: [ each = $\ ]) ifTrue: [ stream nextPut: each ].
 		stream nextPut: each ].
 	stream nextPut: $'
 ]

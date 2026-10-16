@@ -8,11 +8,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3FormattedStatementQuotingTest >> expectedFailures [
-	^ #( #testBackslashIsNotAnEscapeWhenSettingIsOff #testByteaRoundTripsWhenSettingIsOff #testTrailingBackslashCannotInjectSql )
-]
-
 { #category : 'tests-server' }
 P3FormattedStatementQuotingTest >> testBackslashIsNotAnEscapeWhenSettingIsOff [
 	"\b is a backspace in an escape string. The value must come back with a backslash and a b."

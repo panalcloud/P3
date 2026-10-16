@@ -747,7 +747,9 @@ P3Client >> initialize [
 P3Client >> initializeConverter [
 	self converter initializeFrom: properties.
 	self converter timestampClass: self timestampClass.
-	self applyUnknownTypesSetting
+	self applyUnknownTypesSetting.
+	"A new connection has a new converter, so the enums that were loaded are loaded again."
+	(settings at: #loadEnums ifAbsent: [ false ]) ifTrue: [ self loadEnums ]
 ]
 
 { #category : 'testing' }
@@ -847,10 +849,13 @@ P3Client >> listDatabases [
 
 { #category : 'convenience' }
 P3Client >> listEnums [
-	"Return the list of currently defined/visible ENUMs as a collection of type OID, type name pairs.
+	"Return the ENUMs defined in the database, in any schema, as a collection of #(type OID, type name,
+	array type OID). The name is qualified with its schema when the type is not in my search path.
 	See also #loadEnums"
-	
-	^ (self query: 'SELECT oid, typname FROM pg_type WHERE oid IN (SELECT DISTINCT enumtypid FROM pg_enum)') data
+
+	^ (self query: 'SELECT t.oid, CASE WHEN pg_type_is_visible(t.oid) THEN t.typname::text ELSE n.nspname || ''.'' || t.typname END, t.typarray
+		FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+		WHERE t.oid IN (SELECT DISTINCT enumtypid FROM pg_enum)') data
 ]
 
 { #category : 'convenience' }
@@ -871,18 +876,27 @@ P3Client >> listTablesInSchema: schemaName [
 
 { #category : 'configuration' }
 P3Client >> loadEnums [
-	"Define converters for all ENUM type OIDs currently visible, converting their values to Symbols.
-	In PSQL ENUMs constitute distinct type OIDs and must be thus be defined before they can be used in results.
+	"Define converters for all ENUM types of the database, and for the arrays of them, converting their
+	values to Symbols. In PSQL ENUMs constitute distinct type OIDs and must be thus be defined before
+	they can be used in results, an ENUM that is not defined signals a P3Error when it is read.
 	Since new ENUMs can be added at any time, there is no good/correct time to call this method.
-	Either call #loadEnums as an initialization for a new connection, or after (all) ENUMs are (re)defined.
+	Call #loadEnums again after ENUMs are (re)defined. Once called, I call it again on every new connection.
 	Return the collection of enum type names processed."
-	
-	^ self listEnums collect: [ :each |
+
+	| names |
+	names := self listEnums collect: [ :each | | name |
+		name := each second asSymbol.
 		self converter
-			mapOid: each first 
-			type: each second asSymbol 
+			mapOid: each first
+			type: name
 			to: #convertSymbolFrom:length:description:.
-		each second asSymbol ]
+		self converter
+			mapArrayOid: each third
+			type: ('_' , each second) asSymbol
+			elementOid: each first.
+		name ].
+	settings at: #loadEnums put: true.
+	^ names
 ]
 
 { #category : 'private - logging' }

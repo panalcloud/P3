@@ -21,11 +21,6 @@ P3EnumTest >> dropObjects [
 		do: [ :notification | notification resume ]
 ]
 
-{ #category : 'accessing' }
-P3EnumTest >> expectedFailures [
-	^ #( #testLoadEnumsAnswersNamesQualifiedWhenNotVisible #testLoadedEnumAndEnumArrayReadSymbols #testLoadedEnumsAreLoadedAgainAfterReconnect )
-]
-
 { #category : 'private' }
 P3EnumTest >> readMoods [
 	^ (client query: 'SELECT m, ms FROM p3_enum_table ORDER BY m NULLS LAST') data

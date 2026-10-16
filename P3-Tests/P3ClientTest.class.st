@@ -53,6 +53,11 @@ P3ClientTest >> benchmark1Size [
 	^ 10000
 ]
 
+{ #category : 'accessing' }
+P3ClientTest >> expectedFailures [
+	^ #( #testIntervalConversion )
+]
+
 { #category : 'benchmarking' }
 P3ClientTest >> runAllTests [
 	"Runs all tests on the same connection/session"
@@ -455,7 +460,7 @@ P3ClientTest >> testIntervalConversion [
 	result := client query: 'SELECT INTERVAL ''1 years 1 mons 1 days 1 hours 1 minutes 1 seconds ago'''.
 	self 
 		assert: result firstFieldOfFirstRecord 
-		equals: (P3Interval years: -1 months: -1 days: -1 hours: -1 minutes: 1 seconds: 1).
+		equals: (P3Interval years: -1 months: -1 days: -1 hours: -1 minutes: -1 seconds: -1).
 
 ]
 

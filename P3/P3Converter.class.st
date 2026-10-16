@@ -128,6 +128,25 @@ P3Converter >> convert: bytes length: length description: description [
 		ifFalse: [ converter value: bytes value: length value: description ]
 ]
 
+{ #category : 'converting-arrays' }
+P3Converter >> convertArrayFrom: bytes length: length description: description [
+	"Read an array whose element type has its own converter. Each element text is converted
+	as if the server had sent it as a column of the element type."
+
+	| input elementDescription |
+	elementDescription := P3RowFieldDescription new
+		typeOid: (map mappingAt: description typeOid ifAbsent: [ self error: 'Not an array type' ]) elementOid;
+		yourself.
+	input := ZnLimitedReadStream on: bytes limit: length.
+	input := ZnCharacterReadStream on: input encoding: self encoder.
+	^ P3ArrayValueParser new
+		on: input;
+		converter: [ :string | | encoded |
+			encoded := self encoder encodeString: string.
+			self convert: encoded readStream length: encoded size description: elementDescription ];
+		next
+]
+
 { #category : 'converting' }
 P3Converter >> convertBitStringFrom: bytes length: length description: description [
 	^ P3BitString readFrom: (self asciiStreamFor: bytes length: length)
@@ -547,6 +566,11 @@ P3Converter >> intervalStyle: aString [
 		refusing: (self usesPostgresIntervalStyle
 			ifTrue: [ nil ]
 			ifFalse: [ [ :bytes :length :description | (P3Error unsupportedIntervalStyle: intervalStyle) signal ] ])
+]
+
+{ #category : 'accessing' }
+P3Converter >> mapArrayOid: anArrayOid type: aTypeName elementOid: anElementOid [
+	^ map mapArrayOid: anArrayOid type: aTypeName elementOid: anElementOid
 ]
 
 { #category : 'accessing' }

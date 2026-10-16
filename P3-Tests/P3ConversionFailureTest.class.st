@@ -14,11 +14,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3ConversionFailureTest >> expectedFailures [
-	^ #( #testCatalogTypeAclitemArrayConvertsToStringArray #testCatalogTypeInt2VectorConvertsToIntegerArray #testCatalogTypePgNodeTreeConvertsToString #testCatalogTypeRegprocConvertsToString #testCatalogTypeXidAndCidConvertToIntegers #testCatalogTypesAreConvertible )
-]
-
 { #category : 'private' }
 P3ConversionFailureTest >> int4Oid [
 	"The type OID I break to simulate a value P3 cannot convert."

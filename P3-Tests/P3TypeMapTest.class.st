@@ -8,11 +8,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3TypeMapTest >> expectedFailures [
-	^ #( #testMapArrayOidRecordsTheElementType #testStandardKnowsScalarAndArrayTypes )
-]
-
 { #category : 'tests' }
 P3TypeMapTest >> testConvertersDoNotShareMappings [
 	| first second block |

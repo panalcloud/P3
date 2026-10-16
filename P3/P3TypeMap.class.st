@@ -37,9 +37,14 @@ P3TypeMap class >> newStandard [
 			19 #(name #convertStringFrom:length:description:) 
 			20 #(int8 #convertIntegerFrom:length:description:) 
 			21 #(int2 #convertIntegerFrom:length:description:) 
+			22 #(int2vector #convertIntegerVectorFrom:length:description:)
 			23 #(int4 #convertIntegerFrom:length:description:) 
+			24 #(regproc #convertStringFrom:length:description:)
 			25 #(text #convertStringFrom:length:description:) 
 			26 #(oid #convertIntegerFrom:length:description:) 
+			28 #(xid #convertIntegerFrom:length:description:)
+			29 #(cid #convertIntegerFrom:length:description:)
+			194 #(pg_node_tree #convertStringFrom:length:description:)
 			700 #(float4 #convertFloatFrom:length:description:) 
 			701 #(float8 #convertFloatFrom:length:description:) 
 			1042 #(bpchar #convertStringFrom:length:description:) 
@@ -59,13 +64,14 @@ P3TypeMap class >> newStandard [
 			114 #(json #convertJsonFrom:length:description:)
 			2950 #(uuid #convertUuidFrom:length:description:)
 			3802 #(jsonb #convertJsonFrom:length:description:)
-			"arrays"
+			"arrays with their own parser"
 			1000 #(#'_bool' #convertBooleanArrayFrom:length:description:)
 			1007 #(#'_int4' #convertIntegerArrayFrom:length:description:)
 			1009 #(#'_text' #convertStringArrayFrom:length:description:)
 			1015 #(#'_varchar' #convertStringArrayFrom:length:description:)
 			1022 #(#'_float8' #convertFloatArrayFrom:length:description:)
 			1028 #(#'_oid' #convertIntegerArrayFrom:length:description:)
+			1034 #(#'_aclitem' #convertStringArrayFrom:length:description:)
 			"geometric"
 			600 #(point #convertPointFrom:length:description:)
 			601 #(lseg #convertLineSegmentFrom:length:description:)
@@ -78,7 +84,14 @@ P3TypeMap class >> newStandard [
 			30 #( oidvector #convertIntegerVectorFrom:length:description: )
 		) pairsDo: [ :oid :type |
 			map mapOid: oid type: type first to: type second ].
-	^ map freeze; yourself
+	"arrays read through the converter of their element type: array oid, element oid"
+	#( 1003 19  1005 21  1014 1042  1016 20  1021 700  1115 1114
+		1182 1082  1185 1184  1231 1700  2951 2950  3807 3802 ) pairsDo: [ :arrayOid :elementOid |
+			map
+				mapArrayOid: arrayOid
+				type: ('_' , (map nameAt: elementOid ifAbsent: [ elementOid printString ])) asSymbol
+				elementOid: elementOid ].
+	^ map freeze
 ]
 
 { #category : 'accessing' }
@@ -117,6 +130,13 @@ P3TypeMap >> initialize [
 	unknownNames := IdentityDictionary new.
 	unknownNamesMutex := Mutex new.
 	isFrozen := false
+]
+
+{ #category : 'extending' }
+P3TypeMap >> mapArrayOid: anArrayOid type: aTypeName elementOid: anElementOid [
+	"Read arrays of type anArrayOid with the converter of the element type, which may be mapped later."
+
+	^ self add: (P3TypeMapping arrayOid: anArrayOid name: aTypeName elementOid: anElementOid)
 ]
 
 { #category : 'extending' }

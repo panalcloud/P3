@@ -10,11 +10,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3ArrayTypeTest >> expectedFailures [
-	^ #( #testStandardArrayTypesAreConverted #testUuidAndTimestampArrays )
-]
-
 { #category : 'tests' }
 P3ArrayTypeTest >> testStandardArrayTypesAreConverted [
 	| record |

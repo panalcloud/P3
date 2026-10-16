@@ -22,7 +22,7 @@ P3NegativeNumberParsingTest >> assertInterval: anIntervalSql fields: expectedFie
 
 { #category : 'accessing' }
 P3NegativeNumberParsingTest >> expectedFailures [
-	^ #( #testFloat4WithPositiveExponent #testFloatArrayWithPositiveExponent #testFloatWithPositiveExponent #testIntervalWithExplicitPlusSign #testNegativeFloatWithPositiveExponent #testNegativeTimePartCarriesSignToMinutesAndSeconds #testNegativeTimePartWithZeroHours #testNegativeZeroKeepsItsSign )
+	^ #( #testIntervalWithExplicitPlusSign #testNegativeTimePartCarriesSignToMinutesAndSeconds #testNegativeTimePartWithZeroHours )
 ]
 
 { #category : 'helpers' }

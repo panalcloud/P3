@@ -25,11 +25,6 @@ P3FloatServerTest >> assertSame: actual as: expected description: aString [
 	self assert: same description: aString , ': got ' , actual printString , ', wanted ' , expected printString
 ]
 
-{ #category : 'accessing' }
-P3FloatServerTest >> expectedFailures [
-	^ #( #testBoundFloatRoundTripsExactly #testFloat4BuiltByServerIsReadWithinItsPrecision #testFloat8ArrayBuiltByServerIsReadExactly #testFloat8BuiltByServerIsReadExactly #testNegativeZeroBuiltByServerKeepsItsSign )
-]
-
 { #category : 'fixtures' }
 P3FloatServerTest >> fixedPairs [
 	"Mantissa and exponent. The value is mantissa * 2^exponent, with a mantissa of at most 53 bits."

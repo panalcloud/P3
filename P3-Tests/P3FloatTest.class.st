@@ -24,11 +24,6 @@ P3FloatTest >> digitsOf: aFloat [
 	^ (text copyFrom: 1 to: index) , '+' , (text copyFrom: index + 1 to: text size)
 ]
 
-{ #category : 'accessing' }
-P3FloatTest >> expectedFailures [
-	^ #( #testReadExponentWithExplicitPlus #testReadIsExactForEveryDoubleItPrintsBack #testReadLimitsOfDouble #testReadNegativeExponent #testReadNegativeZeroKeepsItsSign #testReadNonFiniteValues #testReadPlainDecimals #testReadRefusesTextThatIsNotAFloat #testWrittenFiniteValueReadsBackAsTheSameDouble )
-]
-
 { #category : 'private' }
 P3FloatTest >> readFloat: aString [
 	^ P3Converter new floatFrom: aString

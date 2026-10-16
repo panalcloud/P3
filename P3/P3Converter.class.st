@@ -23,6 +23,13 @@ Class {
 }
 
 { #category : 'accessing' }
+P3Converter class >> exactPowersOfTen [
+	"10 raisedTo: 0 to 22, each exactly representable as a Float"
+
+	^ #(1.0e0 1.0e1 1.0e2 1.0e3 1.0e4 1.0e5 1.0e6 1.0e7 1.0e8 1.0e9 1.0e10 1.0e11 1.0e12 1.0e13 1.0e14 1.0e15 1.0e16 1.0e17 1.0e18 1.0e19 1.0e20 1.0e21 1.0e22)
+]
+
+{ #category : 'accessing' }
 P3Converter class >> supportedTypes [
 	"Return the list of PostgreSQL internal type names that we can convert to objects."
 	
@@ -154,20 +161,20 @@ P3Converter >> convertFixedBitStringFrom: bytes length: length description: desc
 	^ P3FixedBitString readFrom: (self asciiStreamFor: bytes length: length)
 ]
 
-{ #category : 'converting-arrays' }
+{ #category : 'converting' }
 P3Converter >> convertFloatArrayFrom: bytes length: length description: description [
 	| input |
 	input := ZnLimitedReadStream on: bytes limit: length.
 	input := ZnCharacterReadStream on: input encoding: self encoder. 
 	^ P3ArrayValueParser new 
 		on: input;
-		converter: [ :string | Float readFrom: string ];
+		converter: [ :string | self floatFrom: string ];
 		next
 ]
 
 { #category : 'converting' }
 P3Converter >> convertFloatFrom: bytes length: length description: description [
-	^ Float readFrom: (self asciiStreamFor: bytes length: length)
+	^ self floatFrom: (self asciiStreamFor: bytes length: length) upToEnd
 ]
 
 { #category : 'converting-arrays' }
@@ -328,6 +335,67 @@ P3Converter >> encoder [
 { #category : 'accessing' }
 P3Converter >> encoder: anObject [
 	encoder := anObject
+]
+
+{ #category : 'converting' }
+P3Converter >> floatFrom: aString [
+	"Read the text of a float4 or float8, as the server writes it: digits with an optional fraction and
+	an optional exponent with its own sign (1e+100, -1.5e-07), or NaN, Infinity and -Infinity.
+	The value is the exact decimal fraction rounded once to a double, so every double that the server
+	prints with the digits that identify it is read back as the same double. A negative zero keeps its sign.
+	When the digits fit in 53 bits and the power of ten is at most 22, both are exact doubles and one
+	multiplication or division rounds correctly. Otherwise the exact fraction is rounded."
+
+	| text size index char negative mantissa digitCount fractionCount exponent exponentNegative exponentCount scale value |
+	text := aString.
+	(text notEmpty and: [ text first isSeparator or: [ text last isSeparator ] ]) ifTrue: [ text := text trimmed ].
+	size := text size.
+	size = 0 ifTrue: [ ^ (P3Error parsingFailed: aString) signal ].
+	text = 'NaN' ifTrue: [ ^ Float nan ].
+	index := 1.
+	negative := false.
+	char := text at: 1.
+	char = $- ifTrue: [ negative := true. index := 2 ].
+	char = $+ ifTrue: [ index := 2 ].
+	(index <= size and: [ (text at: index) = $I ]) ifTrue: [
+		(text copyFrom: index to: size) = 'Infinity' ifFalse: [ ^ (P3Error parsingFailed: aString) signal ].
+		^ negative ifTrue: [ Float infinity negated ] ifFalse: [ Float infinity ] ].
+	mantissa := digitCount := fractionCount := 0.
+	[ index <= size and: [ (char := text at: index) isDigit ] ] whileTrue: [
+		mantissa := mantissa * 10 + char digitValue.
+		digitCount := digitCount + 1.
+		index := index + 1 ].
+	(index <= size and: [ (text at: index) = $. ]) ifTrue: [
+		index := index + 1.
+		[ index <= size and: [ (char := text at: index) isDigit ] ] whileTrue: [
+			mantissa := mantissa * 10 + char digitValue.
+			digitCount := digitCount + 1.
+			fractionCount := fractionCount + 1.
+			index := index + 1 ] ].
+	digitCount = 0 ifTrue: [ ^ (P3Error parsingFailed: aString) signal ].
+	exponent := 0.
+	(index <= size and: [ (char := text at: index) = $e or: [ char = $E ] ]) ifTrue: [
+		index := index + 1.
+		exponentNegative := false.
+		(index <= size and: [ (text at: index) = $- ]) ifTrue: [ exponentNegative := true. index := index + 1 ].
+		(index <= size and: [ (text at: index) = $+ ]) ifTrue: [ index := index + 1 ].
+		exponentCount := 0.
+		[ index <= size and: [ (char := text at: index) isDigit ] ] whileTrue: [
+			exponent := exponent * 10 + char digitValue.
+			exponentCount := exponentCount + 1.
+			index := index + 1 ].
+		exponentCount = 0 ifTrue: [ ^ (P3Error parsingFailed: aString) signal ].
+		exponentNegative ifTrue: [ exponent := exponent negated ] ].
+	index <= size ifTrue: [ ^ (P3Error parsingFailed: aString) signal ].
+	mantissa = 0 ifTrue: [ ^ negative ifTrue: [ Float negativeZero ] ifFalse: [ 0.0 ] ].
+	scale := exponent - fractionCount.
+	value := (mantissa < 9007199254740992 and: [ scale abs <= 22 ])
+		ifTrue: [
+			scale >= 0
+				ifTrue: [ mantissa asFloat * (self class exactPowersOfTen at: scale + 1) ]
+				ifFalse: [ mantissa asFloat / (self class exactPowersOfTen at: scale negated + 1) ] ]
+		ifFalse: [ (mantissa * (10 raisedTo: scale)) asFloat ].
+	^ negative ifTrue: [ value negated ] ifFalse: [ value ]
 ]
 
 { #category : 'initialize' }

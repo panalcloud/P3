@@ -26,57 +26,21 @@ Class {
 P3Converter class >> supportedTypes [
 	"Return the list of PostgreSQL internal type names that we can convert to objects."
 	
-	^ self typeMap values collect: #first
+	^ P3TypeMap standard supportedTypes
 ]
 
 { #category : 'accessing' }
 P3Converter class >> typeMap [
-	^ IdentityDictionary newFromPairs: #(
-			16 #(bool #convertBooleanFrom:length:description:) 
-			17 #(bytea #convertByteArrayFrom:length:description:) 
-			19 #(name #convertStringFrom:length:description:) 
-			20 #(int8 #convertIntegerFrom:length:description:) 
-			21 #(int2 #convertIntegerFrom:length:description:) 
-			23 #(int4 #convertIntegerFrom:length:description:) 
-			25 #(text #convertStringFrom:length:description:) 
-			26 #(oid #convertIntegerFrom:length:description:) 
-			700 #(float4 #convertFloatFrom:length:description:) 
-			701 #(float8 #convertFloatFrom:length:description:) 
-			1042 #(bpchar #convertStringFrom:length:description:) 
-			1043 #(varchar #convertStringFrom:length:description:)
-			1560 #(bit #convertFixedBitStringFrom:length:description:)
-			1562 #(varbit #convertBitStringFrom:length:description:)
-			1700 #(numeric #convertScaledDecimalFrom:length:description:) 
-			2278 #(void #convertVoidFrom:length:description:)
-			"chronology"
-			1082 #(date #convertDateFrom:length:description:) 
-			1083 #(time #convertTimeFrom:length:description:) 
-			1114 #(timestamp #convertDateAndTimeWithoutTimezoneFrom:length:description:) 
-			1184 #(timestamptz #convertDateAndTimeFrom:length:description:)
-			1186 #(interval #convertIntervalFrom:length:description:)
-			1266 #(timetz #convertTimeWithTimezoneFrom:length:description:)
-			"special"
-			114 #(json #convertJsonFrom:length:description:)
-			2950 #(uuid #convertUuidFrom:length:description:)
-			3802 #(jsonb #convertJsonFrom:length:description:)
-			"arrays"
-			1000 #(#'_bool' #convertBooleanArrayFrom:length:description:)
-			1007 #(#'_int4' #convertIntegerArrayFrom:length:description:)
-			1009 #(#'_text' #convertStringArrayFrom:length:description:)
-			1015 #(#'_varchar' #convertStringArrayFrom:length:description:)
-			1022 #(#'_float8' #convertFloatArrayFrom:length:description:)
-			1028 #(#'_oid' #convertIntegerArrayFrom:length:description:)
-			"geometric"
-			600 #(point #convertPointFrom:length:description:)
-			601 #(lseg #convertLineSegmentFrom:length:description:)
-			602 #(path #convertPathFrom:length:description:)
-			603 #(box #convertBoxFrom:length:description:)
-			604 #(polygon #convertPolygonFrom:length:description:)
-			628 #(line #convertLineFrom:length:description:)
-			718 #(circle #convertCircleFrom:length:description:)
-			"vectors"
-			30 #( oidvector #convertIntegerVectorFrom:length:description: )
-		)
+	"Answer the standard type map in its old shape, a dictionary from OID to name and converter."
+
+	| standard |
+	self deprecated: 'Use P3TypeMap standard, or P3Converter>>#typeMap for the map of one converter'.
+	standard := P3TypeMap standard.
+	^ IdentityDictionary newFromPairs: (standard oids
+		inject: OrderedCollection new
+		into: [ :pairs :oid | | mapping |
+			mapping := standard mappingAt: oid ifAbsent: [ nil ].
+			pairs add: oid; add: { mapping name. mapping converter }; yourself ])
 ]
 
 { #category : 'input/output' }
@@ -102,14 +66,11 @@ P3Converter >> asciiStreamFor: bytes length: length [
 
 { #category : 'converting' }
 P3Converter >> convert: bytes length: length description: description [
-	^ map 
-		at: description typeOid 
-		ifPresent: [ :type | | lambda |
-			lambda := type second.
-	 		lambda isSymbol 
-				ifTrue: [ self perform: lambda with: bytes with: length with: description ]
-				ifFalse: [ lambda value: bytes value: length value: description ] ]
-		ifAbsent: [ (P3Error cannotConvertTypeOid: description typeOid) signal ]
+	| converter |
+	converter := (map mappingAt: description typeOid ifAbsent: [ ^ (P3Error cannotConvertTypeOid: description typeOid) signal ]) converter.
+	^ converter isSymbol
+		ifTrue: [ self perform: converter with: bytes with: length with: description ]
+		ifFalse: [ converter value: bytes value: length value: description ]
 ]
 
 { #category : 'converting' }
@@ -396,13 +357,14 @@ P3Converter >> initializeFrom: properties [
 
 { #category : 'initialize' }
 P3Converter >> initializeTypeMap [
-	map := self class typeMap
+	"My own extension of the standard map, so that #mapOid:type:to: changes no other converter."
+
+	map := P3TypeMap standard extension
 ]
 
 { #category : 'accessing' }
 P3Converter >> mapOid: anOoid type: aTypename to: aBlockOrSymbol [
-
-	^ map at: anOoid put: { aTypename . aBlockOrSymbol }	
+	^ map mapOid: anOoid type: aTypename to: aBlockOrSymbol
 ]
 
 { #category : 'printing' }
@@ -433,4 +395,9 @@ P3Converter >> timezone [
 { #category : 'accessing' }
 P3Converter >> timezone: anObject [
 	timezone := anObject
+]
+
+{ #category : 'accessing' }
+P3Converter >> typeMap [
+	^ map
 ]

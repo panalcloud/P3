@@ -30,11 +30,6 @@ P3ArrayParameterTest >> arrayLiteralFor: aCollection [
 	^ (builder asBytes allButFirst: 4) utf8Decoded
 ]
 
-{ #category : 'accessing' }
-P3ArrayParameterTest >> expectedFailures [
-	^ #( #testArrayLiteralEscapesQuoteAndBackslash #testArrayLiteralOfEmptyCollection #testArrayLiteralOfNestedCollections #testArrayLiteralQuotesElements #testArrayLiteralWritesNilAsNull #testByteaArrayElementRoundTrips #testIntegerArrayWithNilRoundTrips #testTextArrayWithEmptyStringRoundTrips #testTextArrayWithNullTextRoundTrips #testTextArrayWithQuotesBackslashesAndWhitespaceRoundTrips #testTextArrayWithSeparatorsRoundTrips )
-]
-
 { #category : 'private' }
 P3ArrayParameterTest >> firstElementOf: aCollection as: aTypeName [
 	"Bind aCollection as an array parameter of aTypeName and answer its first element as read

@@ -245,8 +245,11 @@ P3Converter >> convertCircleFrom: bytes length: length description: description 
 
 { #category : 'converting-chronology' }
 P3Converter >> convertDateAndTimeFrom: bytes length: length description: description [
-	"TIMESTAMP WITH TIME ZONE (TIMESTAMPTZ) is stored internally in Postgres as UTC, but represented in the timezone of the connection, with a correct offset added. In other words, Postgres does the necessary shifting, we just have to read the result. For this to work, the connection output format must be ISO, the default."
-	
+	"TIMESTAMP WITH TIME ZONE (TIMESTAMPTZ) is stored internally in Postgres as UTC, but represented in the timezone of the connection, with a correct offset added. In other words, Postgres does the necessary shifting, we just have to read the result. For this to work, the connection output format must be ISO, the default.
+	The plain form is read by #plainTimestampFrom:length:zone:, anything else by P3ISO8601Parser."
+
+	bytes class == ReadStream
+		ifTrue: [ (self plainTimestampFrom: bytes length: length zone: nil) ifNotNil: [ :timestamp | ^ timestamp ] ].
 	^ (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length))
 			timestampClass: timestampClass;
 			parseDateAndTime
@@ -254,9 +257,15 @@ P3Converter >> convertDateAndTimeFrom: bytes length: length description: descrip
 
 { #category : 'converting-chronology' }
 P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length description: description [
-	"TIMESTAMP WITHOUT TIME ZONE (TIMESTAMP) is stored internally in Postgres the way it was inserted, its representation remains constant, with no offset added. We use the timezone of the connection to do the necessary shifting. This assumes that the timezones used during insert/update and query are the same. For this to work, the connection output format must be ISO, the default."
+	"TIMESTAMP WITHOUT TIME ZONE (TIMESTAMP) is stored internally in Postgres the way it was inserted, its representation remains constant, with no offset added. We use the timezone of the connection to do the necessary shifting. This assumes that the timezones used during insert/update and query are the same. For this to work, the connection output format must be ISO, the default.
+	The plain form is read and shifted by #plainTimestampFrom:length:zone:, anything else by P3ISO8601Parser.
+	Without a known session zone the parser path signals, as #sessionTimezone does."
 
 	| timestamp offset |
+	(bytes class == ReadStream and: [ timezone notNil ])
+		ifTrue: [
+			(self plainTimestampFrom: bytes length: length zone: timezone)
+				ifNotNil: [ :plainTimestamp | ^ plainTimestamp ] ].
 	timestamp := (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length))
 							timestampClass: timestampClass;
 							parseDateAndTime.
@@ -268,8 +277,11 @@ P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length descr
 
 { #category : 'converting-chronology' }
 P3Converter >> convertDateFrom: bytes length: length description: description [
-	"For this to work, the connection output format must be ISO, the default"
-	
+	"For this to work, the connection output format must be ISO, the default.
+	The plain form is read by #plainDateFrom:length:, anything else by P3ISO8601Parser."
+
+	bytes class == ReadStream
+		ifTrue: [ (self plainDateFrom: bytes length: length) ifNotNil: [ :date | ^ date ] ].
 	^ (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseDate
 ]
 
@@ -404,8 +416,11 @@ P3Converter >> convertTimeFrom: bytes length: length description: description [
 	"TIME [ WITHOUT TIME ZONE ] corresponds to Time, i.e. 
 	both have no knowledge about the applicable time zone.
 	We assume the time to be correct as there is no sensible conversion to be done.
-	For this to work, the connection output format must be ISO, the default"
-	
+	For this to work, the connection output format must be ISO, the default.
+	The plain form is read by #plainTimeFrom:length:, anything else by P3ISO8601Parser."
+
+	bytes class == ReadStream
+		ifTrue: [ (self plainTimeFrom: bytes length: length) ifNotNil: [ :time | ^ time ] ].
 	^ (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTime
 ]
 
@@ -472,6 +487,19 @@ P3Converter >> dateStyle: aString [
 		refusing: (self usesISODateStyle
 			ifTrue: [ nil ]
 			ifFalse: [ [ :bytes :length :description | (P3Error unsupportedDateStyle: dateStyle) signal ] ])
+]
+
+{ #category : 'converting' }
+P3Converter >> digitsIn: buffer from: start count: count [
+	"The value of the count decimal digits in buffer from start on, or nil when one is not a digit"
+
+	| value |
+	value := 0.
+	start to: start + count - 1 do: [ :index | | digit |
+		digit := (buffer at: index) - 48 "$0".
+		(digit >= 0 and: [ digit <= 9 ]) ifFalse: [ ^ nil ].
+		value := value * 10 + digit ].
+	^ value
 ]
 
 { #category : 'input/output' }
@@ -661,6 +689,15 @@ P3Converter >> mapOid: anOoid type: aTypename to: aBlockOrSymbol [
 	^ map mapOid: anOoid type: aTypename to: aBlockOrSymbol
 ]
 
+{ #category : 'converting' }
+P3Converter >> nanoSecondsIn: buffer from: start count: count [
+	"The fraction of a second written with count digits, 1 to 9, in buffer from start on, as
+	nanoseconds, or nil when one is not a digit"
+
+	^ (self digitsIn: buffer from: start count: count)
+		ifNotNil: [ :value | value * (#( 100000000 10000000 1000000 100000 10000 1000 100 10 1 ) at: count) ]
+]
+
 { #category : 'initialize' }
 P3Converter >> noteSessionParameter: key value: value [
 	"React to a server parameter that decides how I read values. Values arrive as text, so these four
@@ -681,6 +718,119 @@ P3Converter >> octalValueOf: threeDigitBytes [
 		(digit between: 48 and: 55) ifFalse: [
 			(P3Error unreadableValue: 'octal escape' text: threeDigitBytes asString) signal ].
 		sum * 8 + (digit - 48) ]
+]
+
+{ #category : 'converting' }
+P3Converter >> plainDateFrom: bytes length: length [
+	"Answer the date written in the next length bytes of bytes, a ReadStream on a ByteArray, as
+	YYYY-MM-DD, and move past them. Answer nil and leave bytes where it was for any other text, which
+	P3ISO8601Parser reads: a year of more than four digits, a date before the common era, infinity."
+
+	| buffer start year month day date |
+	length = 10 ifFalse: [ ^ nil ].
+	buffer := bytes originalContents.
+	start := bytes position + 1.
+	((buffer at: start + 4) = 45 and: [ (buffer at: start + 7) = 45 ]) ifFalse: [ ^ nil ].
+	year := self digitsIn: buffer from: start count: 4.
+	month := self digitsIn: buffer from: start + 5 count: 2.
+	day := self digitsIn: buffer from: start + 8 count: 2.
+	(year isNil or: [ month isNil or: [ day isNil ] ]) ifTrue: [ ^ nil ].
+	date := [ Date year: year month: month day: day ] on: DateError do: [ :error | ^ nil ].
+	bytes skip: length.
+	^ date
+]
+
+{ #category : 'converting' }
+P3Converter >> plainTimeFrom: bytes length: length [
+	"Answer the time written in the next length bytes of bytes, a ReadStream on a ByteArray, as
+	hh:mm:ss with an optional fraction of one to nine digits, and move past them. Answer nil and leave
+	bytes where it was for any other text, which P3ISO8601Parser reads."
+
+	| buffer start hour minute second nanoSecond |
+	(length = 8 or: [ length >= 10 and: [ length <= 18 ] ]) ifFalse: [ ^ nil ].
+	buffer := bytes originalContents.
+	start := bytes position + 1.
+	((buffer at: start + 2) = 58 and: [ (buffer at: start + 5) = 58 ]) ifFalse: [ ^ nil ].
+	hour := self digitsIn: buffer from: start count: 2.
+	minute := self digitsIn: buffer from: start + 3 count: 2.
+	second := self digitsIn: buffer from: start + 6 count: 2.
+	(hour isNil or: [ minute isNil or: [ second isNil ] ]) ifTrue: [ ^ nil ].
+	nanoSecond := 0.
+	length > 8 ifTrue: [
+		(buffer at: start + 8) = 46 ifFalse: [ ^ nil ].
+		(nanoSecond := self nanoSecondsIn: buffer from: start + 9 count: length - 9) ifNil: [ ^ nil ] ].
+	bytes skip: length.
+	^ Time hour: hour minute: minute second: second nanoSecond: nanoSecond
+]
+
+{ #category : 'converting' }
+P3Converter >> plainTimestampFrom: bytes length: length zone: aTimezoneOrNil [
+	"Answer the timestamp written in the next length bytes of bytes, a ReadStream on a ByteArray, as
+	YYYY-MM-DD hh:mm:ss with an optional fraction of one to nine digits and an optional offset +HH or
+	+HH:MM, and move past them. It is made as P3ISO8601Parser>>#parseDateAndTime makes it. Answer nil
+	and leave bytes where it was for any other text, which the parser reads: a year of more than four
+	digits, a time before the common era, an offset with seconds, infinity.
+
+	With aTimezoneOrNil, the fields are kept and the offset becomes the one of that zone, as
+	DateAndTime>>#translateTo: does, see #convertDateAndTimeWithoutTimezoneFrom:length:description:."
+
+	| buffer start end year month day hour minute second index nanoSecond offset timestamp zoneOffset |
+	length >= 19 ifFalse: [ ^ nil ].
+	buffer := bytes originalContents.
+	start := bytes position + 1.
+	end := start + length - 1.
+	((buffer at: start + 4) = 45 and: [ (buffer at: start + 7) = 45
+		and: [ ((buffer at: start + 10) = 32 or: [ (buffer at: start + 10) = 84 ])
+		and: [ (buffer at: start + 13) = 58 and: [ (buffer at: start + 16) = 58 ] ] ] ])
+			ifFalse: [ ^ nil ].
+	year := self digitsIn: buffer from: start count: 4.
+	month := self digitsIn: buffer from: start + 5 count: 2.
+	day := self digitsIn: buffer from: start + 8 count: 2.
+	hour := self digitsIn: buffer from: start + 11 count: 2.
+	minute := self digitsIn: buffer from: start + 14 count: 2.
+	second := self digitsIn: buffer from: start + 17 count: 2.
+	(year isNil or: [ month isNil or: [ day isNil or: [ hour isNil or: [ minute isNil or: [ second isNil ] ] ] ] ])
+		ifTrue: [ ^ nil ].
+	index := start + 19.
+	nanoSecond := 0.
+	(index <= end and: [ (buffer at: index) = 46 ]) ifTrue: [ | first |
+		first := index + 1.
+		index := first.
+		[ index <= end and: [ (buffer at: index) >= 48 and: [ (buffer at: index) <= 57 ] ] ]
+			whileTrue: [ index := index + 1 ].
+		(index > first and: [ index - first <= 9 ]) ifFalse: [ ^ nil ].
+		nanoSecond := self nanoSecondsIn: buffer from: first count: index - first ].
+	offset := 0.
+	(index <= end and: [ (buffer at: index) = 43 or: [ (buffer at: index) = 45 ] ]) ifTrue: [ | hours minutes |
+		index + 2 <= end ifFalse: [ ^ nil ].
+		(hours := self digitsIn: buffer from: index + 1 count: 2) ifNil: [ ^ nil ].
+		minutes := 0.
+		index + 2 < end ifTrue: [
+			((buffer at: index + 3) = 58 and: [ index + 5 = end ]) ifFalse: [ ^ nil ].
+			(minutes := self digitsIn: buffer from: index + 4 count: 2) ifNil: [ ^ nil ] ].
+		offset := hours * 3600 + (minutes * 60).
+		(buffer at: index) = 45 ifTrue: [ offset := offset negated ].
+		index := end + 1 ].
+	index = (end + 1) ifFalse: [ ^ nil ].
+	timestamp := [ timestampClass
+			year: year month: month day: day
+			hour: hour minute: minute second: second
+			nanoSecond: nanoSecond
+			offset: offset seconds ]
+		on: DateError
+		do: [ :error | ^ nil ].
+	aTimezoneOrNil ifNotNil: [
+		zoneOffset := aTimezoneOrNil offsetForTimestamp: timestamp.
+		zoneOffset isZero ifFalse: [
+			timestamp := timestampClass == DateAndTime
+				ifTrue: [ DateAndTime
+					year: year month: month day: day
+					hour: hour minute: minute second: second
+					nanoSecond: nanoSecond
+					offset: zoneOffset asDuration ]
+				ifFalse: [ timestamp translateTo: zoneOffset ] ] ].
+	bytes skip: length.
+	^ timestamp
 ]
 
 { #category : 'printing' }

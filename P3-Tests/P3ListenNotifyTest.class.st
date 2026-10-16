@@ -100,6 +100,13 @@ P3ListenNotifyTest >> tearDown [
 	super tearDown
 ]
 
+{ #category : 'private' }
+P3ListenNotifyTest >> terminateClientBackend [
+	"End my client's server session from the notifier, and wait until it is gone."
+
+	notifier query: 'SELECT pg_terminate_backend(' , client backendProcessId printString , ', 5000)'
+]
+
 { #category : 'tests - api' }
 P3ListenNotifyTest >> testChannelNameIsLimitedTo63Bytes [
 	"The server truncates a longer LISTEN name but refuses it in pg_notify, so the listen would never match.
@@ -156,6 +163,17 @@ P3ListenNotifyTest >> testEmptyPayloadIsEmptyString [
 	notifications := self received.
 	self assert: notifications size equals: 1.
 	self assert: notifications first payload equals: ''
+]
+
+{ #category : 'tests - reconnect' }
+P3ListenNotifyTest >> testExplicitCloseForgetsTheChannels [
+	"An explicit close ends the session on purpose: a later connection starts without subscriptions."
+
+	client listen: self channelName.
+	client close.
+	client connect.
+	self assert: client listeningChannels isEmpty.
+	self assert: self serverListeningChannels isEmpty
 ]
 
 { #category : 'tests - api' }
@@ -309,6 +327,39 @@ P3ListenNotifyTest >> testReceivedAtIsWhenRead [
 	self assert: (notifications first receivedAt between: before and: after)
 ]
 
+{ #category : 'tests - reconnect' }
+P3ListenNotifyTest >> testReplacementConnectionListensAgain [
+	| oldPid events notifications |
+	client listen: 'p3_a'; listen: 'p3_b'.
+	oldPid := client backendProcessId.
+	self terminateClientBackend.
+	events := self logEventsOf: P3ListenRestoredEvent during: [ client query: 'SELECT 1' ].
+	self deny: client backendProcessId equals: oldPid.
+	self assert: self serverListeningChannels equals: #( 'p3_a' 'p3_b' ) asSet.
+	self assert: client listeningChannels equals: #( 'p3_a' 'p3_b' ) asSet.
+	self assert: events size equals: 1.
+	self assert: events first channels asSet equals: #( 'p3_a' 'p3_b' ) asSet.
+	self send: 'again' on: 'p3_b'.
+	notifications := self received.
+	self assert: notifications size equals: 1.
+	self assert: notifications first payload equals: 'again'
+]
+
+{ #category : 'tests - reconnect' }
+P3ListenNotifyTest >> testReplacementIsSignalledAfterListeningAgain [
+	"A handler of P3ConnectionReplaced, the place to resynchronise, finds the channels registered already."
+
+	| channelsSeen |
+	client listen: self channelName.
+	self terminateClientBackend.
+	[ client query: 'SELECT 1' ]
+		on: P3ConnectionReplaced
+		do: [ :notification |
+			channelsSeen := self serverListeningChannels.
+			notification resume ].
+	self assert: channelsSeen equals: { self channelName } asSet
+]
+
 { #category : 'tests - notification' }
 P3ListenNotifyTest >> testUnicodePayloadRoundTrips [
 	| payload notifications |
@@ -343,6 +394,18 @@ P3ListenNotifyTest >> testUnlistenStopsDelivery [
 	self send: 'after'.
 	self assert: self received isEmpty.
 	self assert: client listeningChannels isEmpty
+]
+
+{ #category : 'tests - reconnect' }
+P3ListenNotifyTest >> testWaitAfterALostConnectionListensAgain [
+	"The loss happened between two waits: the next wait replaces the connection and receives on it."
+
+	| answer |
+	client listen: self channelName.
+	self terminateClientBackend.
+	self after: 500 do: [ self send: 'after reconnect' ].
+	answer := client waitForNotification: 5.
+	self assert: answer payload equals: 'after reconnect'
 ]
 
 { #category : 'tests - wait' }
@@ -415,6 +478,17 @@ P3ListenNotifyTest >> testWaitTimesOutWithoutTraffic [
 	self assert: answer isNil.
 	self assert: (elapsed between: 1900 and: 2700).
 	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - reconnect' }
+P3ListenNotifyTest >> testWaitWithoutAutoReconnectSignals [
+	client autoReconnect: false.
+	client listen: self channelName.
+	self terminateClientBackend.
+	self should: [ client waitForNotification: 2 ] raise: P3Error.
+	client connect.
+	self assert: client listeningChannels equals: { self channelName } asSet.
+	self assert: self serverListeningChannels equals: { self channelName } asSet
 ]
 
 { #category : 'tests - wait' }

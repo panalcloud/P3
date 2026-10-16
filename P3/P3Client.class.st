@@ -622,6 +622,14 @@ P3Client >> discardedError [
 	^ discardedError
 ]
 
+{ #category : 'notifications' }
+P3Client >> droppedNotificationCount [
+	"How many notifications my queue dropped because it was full, see #notificationLimit. It only grows: a
+	consumer that sees it change has missed notifications and has to resynchronise."
+
+	^ droppedNotificationCount
+]
+
 { #category : 'accessing' }
 P3Client >> enableUnknownTypesAsText: aBoolean [
 	"When true, a column of a type that has no converter is answered as the text the server sent.
@@ -1099,6 +1107,22 @@ P3Client >> logListen: actionSymbol channel: channelNameOrNil [
 ]
 
 { #category : 'private - logging' }
+P3Client >> logNotification: aChannelNotification [
+	P3LogEvent hasSubscribers ifFalse: [ ^ self ].
+	(self newLogEvent: P3NotificationReceivedEvent)
+		notification: aChannelNotification;
+		emit
+]
+
+{ #category : 'private - logging' }
+P3Client >> logNotificationDropped [
+	P3LogEvent hasSubscribers ifFalse: [ ^ self ].
+	(self newLogEvent: P3NotificationsDroppedEvent)
+		droppedCount: droppedNotificationCount limit: self notificationLimit;
+		emit
+]
+
+{ #category : 'private - logging' }
 P3Client >> logPreparedStatement: statement query: query [
 	P3LogEvent hasSubscribers ifFalse: [ ^ self ].
 	(self newLogEvent: P3StatementPreparedEvent)
@@ -1230,10 +1254,27 @@ P3Client >> noteResponseRequested [
 	pendingResponses := pendingResponses + 1
 ]
 
+{ #category : 'notifications' }
+P3Client >> notificationLimit [
+	"How many notifications my queue keeps, default 10000. Beyond that the oldest is dropped and counted,
+	see #droppedNotificationCount."
+
+	^ settings at: #notificationLimit ifAbsent: [ 10000 ]
+]
+
+{ #category : 'notifications' }
+P3Client >> notificationLimit: anInteger [
+	"See #notificationLimit. A queue already longer is trimmed when the next notification arrives."
+
+	(anInteger isInteger and: [ anInteger > 0 ])
+		ifFalse: [ ^ self error: 'The notification limit must be a positive integer' ].
+	settings at: #notificationLimit put: anInteger
+]
+
 { #category : 'accessing' }
 P3Client >> notifications [
-	"The NOTIFYs collected while reading responses, oldest first. See #takeNotifications to consume
-	them. A connection that LISTENs and never consumes them collects them without bound."
+	"The NOTIFYs queued while reading, oldest first, without taking them. See #takeNotifications and
+	#waitForNotification: to consume them. The queue is bounded by #notificationLimit."
 
 	^ self critical: [ notifications asArray ]
 ]
@@ -1442,15 +1483,22 @@ P3Client >> processNoticeResponse [
 
 { #category : 'private' }
 P3Client >> processNotificationResponse [
-	"Collect the NOTIFY I am positioned on. The server delivers it once, so discarding it would
-	lose its payload. See #notifications."
+	"Queue the NOTIFY I am positioned on. The server delivers it once, so discarding it would lose its
+	payload. The queue is bounded by #notificationLimit: the oldest notifications are dropped first and
+	counted in #droppedNotificationCount. See #takeNotifications."
 
-	| payload |
+	| payload notification |
 	payload := message readStream.
-	notifications addLast: (P3ChannelNotification
+	notification := P3ChannelNotification
 		processId: payload uint32
 		channel: (self converter encodedCStringFrom: payload)
-		payload: (self converter encodedCStringFrom: payload))
+		payload: (self converter encodedCStringFrom: payload).
+	notifications addLast: notification.
+	self logNotification: notification.
+	[ notifications size > self notificationLimit ] whileTrue: [
+		notifications removeFirst.
+		droppedNotificationCount := droppedNotificationCount + 1.
+		self logNotificationDropped ]
 ]
 
 { #category : 'private' }

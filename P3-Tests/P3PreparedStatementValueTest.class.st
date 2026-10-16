@@ -5,11 +5,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3PreparedStatementValueTest >> expectedFailures [
-	^ #( #testArbitraryObjectIsRefused #testCharacterIsOneCharacterText #testCharactersAndRefusedObjectsInArrays #testFractionIsRefused #testObjectPrintingAsSqlIsNotRun #testSupportedValueTypesReachTheServerAndComeBack )
-]
-
 { #category : 'helpers' }
 P3PreparedStatementValueTest >> refusedValueCode [
 	^ 'P3061'

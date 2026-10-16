@@ -187,9 +187,14 @@ P3MessageBuilder >> printNullOn: stream [
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printObject: object on: stream [
-	"In general, just use the standard print string representation"
-	
-	object printOn: stream 
+	"Integers, booleans and characters have a parameter text. Floats and scaled decimals have their own
+	printers. Any other object has none: its print string is not data, so it is refused. This includes a
+	Fraction, which has no exact decimal text."
+
+	object isInteger ifTrue: [ ^ object printOn: stream ].
+	(object == true or: [ object == false ]) ifTrue: [ ^ object printOn: stream ].
+	object isCharacter ifTrue: [ ^ stream nextPut: object ].
+	^ (P3Error cannotBindObject: object) signal
 ]
 
 { #category : 'printing-dispatched' }

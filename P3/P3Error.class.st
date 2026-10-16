@@ -27,6 +27,13 @@ P3Error class >> bindCompleteExpected [
 ]
 
 { #category : 'accessing' }
+P3Error class >> cannotBindObject: object [
+	^ self new 
+		info: { $C->'P3061'. $M->('Cannot bind {1} as a parameter' format: { object class name }) } asDictionary; 
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> cannotConvertTypeOid: typeOid [
 	^ self new 
 		info: { $C->'P3030'. $M->('Cannot convert type with OID {1}' format: { typeOid }) } asDictionary; 

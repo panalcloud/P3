@@ -5,9 +5,40 @@ Class {
 	#package : 'P3-Tests'
 }
 
+{ #category : 'accessing' }
+P3FormattedStatementValueTest >> expectedFailures [
+	^ #( #testFailedBatchLeavesNoRows )
+]
+
 { #category : 'helpers' }
 P3FormattedStatementValueTest >> refusedValueCode [
 	^ 'P3060'
+]
+
+{ #category : 'tests' }
+P3FormattedStatementValueTest >> testBatchInsideATransactionIsLeftToIt [
+	"Inside the caller's transaction the batch opens none of its own; the caller commits or rolls back."
+
+	client execute: 'CREATE TEMP TABLE p3_batch_probe (n int4)'.
+	client execute: 'BEGIN'.
+	(client format: 'INSERT INTO p3_batch_probe VALUES ($1)') executeBatch: { { 1 }. { 2 } }.
+	self assert: client transactionStatus equals: $T.
+	client execute: 'ROLLBACK'.
+	self assert: (client query: 'SELECT count(*) FROM p3_batch_probe') firstFieldOfFirstRecord equals: 0
+]
+
+{ #category : 'tests' }
+P3FormattedStatementValueTest >> testFailedBatchLeavesNoRows [
+	"A batch is atomic. When its third row fails the first two must not stay."
+
+	client execute: 'CREATE TEMP TABLE p3_batch_probe (n int4 PRIMARY KEY)'.
+	self
+		should: [ (client format: 'INSERT INTO p3_batch_probe VALUES ($1)') executeBatch: { { 1 }. { 2 }. { 'x' }. { 4 } } ]
+		raise: P3Error.
+	self assert: client transactionStatus equals: $I.
+	self
+		assert: (client query: 'SELECT count(*) FROM p3_batch_probe') firstFieldOfFirstRecord
+		equals: 0
 ]
 
 { #category : 'tests' }

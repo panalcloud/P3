@@ -176,6 +176,53 @@ P3ListenNotifyTest >> testExplicitCloseForgetsTheChannels [
 	self assert: self serverListeningChannels isEmpty
 ]
 
+{ #category : 'tests - handler' }
+P3ListenNotifyTest >> testFailingHandlerIsLoggedAndLeavesTheConnectionUsable [
+	| events result seen |
+	seen := OrderedCollection new.
+	client notificationHandler: [ :notification |
+		seen add: notification payload.
+		notification payload = 'bad' ifTrue: [ self error: 'handler failure' ] ].
+	client listen: self channelName.
+	self send: 'bad'; send: 'good'.
+	events := self logEventsOf: P3ErrorOccurredEvent during: [ result := client query: 'SELECT 7' ].
+	self assert: result data equals: #( #( 7 ) ).
+	self assert: seen asArray equals: #( 'bad' 'good' ).
+	self assert: events size equals: 1.
+	self assert: events first exception messageText equals: 'handler failure'.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - handler' }
+P3ListenNotifyTest >> testHandlerCanUseTheClient [
+	"The response that carried the notification is read completely before the handler runs."
+
+	| answers |
+	answers := OrderedCollection new.
+	client notificationHandler: [ :notification |
+		answers add: (client query: 'SELECT ' , notification payload) firstFieldOfFirstRecord ].
+	client listen: self channelName.
+	self send: '11'; send: '22'.
+	self assert: (client query: 'SELECT 7') data equals: #( #( 7 ) ).
+	self assert: answers asArray equals: #( 11 22 ).
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - handler' }
+P3ListenNotifyTest >> testHandlerReceivesNotificationsInOrder [
+	| seen process |
+	seen := OrderedCollection new.
+	client notificationHandler: [ :notification |
+		process := Processor activeProcess.
+		seen add: notification payload ].
+	client listen: self channelName.
+	self send: 'one'; send: 'two'; send: 'three'.
+	self assert: (client query: 'SELECT 7') data equals: #( #( 7 ) ).
+	self assert: seen asArray equals: #( 'one' 'two' 'three' ).
+	self assert: process equals: Processor activeProcess.
+	self deny: client hasNotifications
+]
+
 { #category : 'tests - api' }
 P3ListenNotifyTest >> testHasNotifications [
 	client listen: self channelName.
@@ -468,6 +515,21 @@ P3ListenNotifyTest >> testWaitReadsNotificationsThatArrivedWhileIdle [
 	self send: 'idle'.
 	answer := client waitForNotification: 5.
 	self assert: answer payload equals: 'idle'
+]
+
+{ #category : 'tests - handler' }
+P3ListenNotifyTest >> testWaitTakesNotificationsBeforeTheHandler [
+	"Each notification is answered once: a wait takes it, the handler only gets what is left after a request."
+
+	| seen answer |
+	seen := OrderedCollection new.
+	client notificationHandler: [ :notification | seen add: notification payload ].
+	client listen: self channelName.
+	self send: 'waited'.
+	answer := client waitForNotification: 5.
+	self assert: answer payload equals: 'waited'.
+	client query: 'SELECT 1'.
+	self assert: seen isEmpty
 ]
 
 { #category : 'tests - wait' }

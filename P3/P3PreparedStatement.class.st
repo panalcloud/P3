@@ -41,7 +41,8 @@ Class {
 		'name',
 		'paramDescriptions',
 		'fieldDescriptions',
-		'source'
+		'source',
+		'generation'
 	],
 	#category : 'P3-Core',
 	#package : 'P3',
@@ -52,6 +53,15 @@ Class {
 P3PreparedStatement class >> newWith: aClient name: aString parameters: paramDescriptions fields: rowDescriptions [
 
 	^ self new initializeWith: aClient name: aString parameters: paramDescriptions fields: rowDescriptions
+]
+
+{ #category : 'private' }
+P3PreparedStatement >> adoptPreparationOf: aFreshStatement [
+	"Take over what the server described when it prepared my source again."
+
+	paramDescriptions := aFreshStatement paramDescriptions.
+	fieldDescriptions := aFreshStatement fieldDescriptions.
+	generation := aFreshStatement generation
 ]
 
 { #category : 'private' }
@@ -88,7 +98,7 @@ P3PreparedStatement >> close [
 
 	client ifNil: [ ^ self ].
 
-	client isConnected
+	(client isConnected and: [ self isStale not ])
 		ifTrue: [ client runCloseStatementNamed: name ].
 
 	"This prepared statement can no longer be used."
@@ -145,13 +155,21 @@ P3PreparedStatement >> fieldDescriptions [
 	^ fieldDescriptions
 ]
 
+{ #category : 'accessing' }
+P3PreparedStatement >> generation [
+	"The connection generation of my client in which I was prepared on the server."
+
+	^ generation
+]
+
 { #category : 'initialization' }
 P3PreparedStatement >> initializeWith: aClient name: aString parameters: aParamDescriptions fields: aRowFieldDescriptions [
 
 	client := aClient.
 	name := aString.
 	paramDescriptions := aParamDescriptions.
-	fieldDescriptions := aRowFieldDescriptions
+	fieldDescriptions := aRowFieldDescriptions.
+	generation := aClient connectionGeneration
 ]
 
 { #category : 'testing' }
@@ -162,6 +180,13 @@ P3PreparedStatement >> isCopy [
 	source ifNil: [ ^ false ].
 	text := source trimLeft.
 	^ text size >= 4 and: [ (text first: 4) asUppercase = 'COPY' ]
+]
+
+{ #category : 'private' }
+P3PreparedStatement >> isStale [
+	"Was I prepared in a server session that is gone? The server forgot me with it."
+
+	^ client notNil and: [ generation ~= client connectionGeneration ]
 ]
 
 { #category : 'accessing' }
@@ -207,27 +232,27 @@ P3PreparedStatement >> queryAll: inputRows [
 ]
 
 { #category : 'private' }
-P3PreparedStatement >> runInputRows: inputRows [
-	"Execute me once per row of inputRows in a single request, and answer one P3Result per row.
-	The whole request is built before anything is written, so a row that cannot be bound leaves the
-	connection as it was instead of executing the rows before it. Nothing shared is touched until the
-	client runs the request under its monitor.
-	A COPY waits for its data after the first Execute, and the server ends the session when a second
-	Bind arrives instead, so a COPY is refused as a batch before anything is sent."
+P3PreparedStatement >> requestMessagesFor: inputRows [
+	"The Bind and Execute messages that run me once per row of inputRows, built in memory."
 
-	| messages |
-	client ifNil: [ ^ (P3Error statementClosed: name) signal ].
-	(inputRows size > 1 and: [ self isCopy ]) ifTrue: [ ^ P3Error copyNotSupported signal ].
-	messages := Array streamContents: [ :out |
+	^ Array streamContents: [ :out |
 		inputRows do: [ :each |
 			out
 				nextPut: (self bindMessageFor: each);
-				nextPut: self executeMessage ] ].
-	^ client
-		runExtendedRequest: messages
-		fieldDescriptions: fieldDescriptions
-		statement: self
-		inputRows: inputRows
+				nextPut: self executeMessage ] ]
+]
+
+{ #category : 'private' }
+P3PreparedStatement >> runInputRows: inputRows [
+	"Execute me once per row of inputRows in a single request, and answer one P3Result per row.
+	The request is built before anything is written, so a row that cannot be bound leaves the connection as
+	it was instead of executing the rows before it. If my server session was replaced, I am prepared again
+	first. A COPY waits for its data after the first Execute, and the server ends the session when a second
+	Bind arrives instead, so a COPY is refused as a batch before anything is sent."
+
+	client ifNil: [ ^ (P3Error statementClosed: name) signal ].
+	(inputRows size > 1 and: [ self isCopy ]) ifTrue: [ ^ P3Error copyNotSupported signal ].
+	^ client runStatement: self inputRows: inputRows
 ]
 
 { #category : 'accessing' }

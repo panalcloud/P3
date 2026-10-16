@@ -89,7 +89,9 @@ Class {
 		'discardedError',
 		'partialWrite',
 		'extendedRequest',
-		'transactionLost'
+		'transactionLost',
+		'connectionGeneration',
+		'connectionLost'
 	],
 	#classInstVars : [
 		'unknownTypesAsTextByDefault'
@@ -204,6 +206,21 @@ P3Client >> authenticationTypes [
 ]
 
 { #category : 'accessing' }
+P3Client >> autoReconnect [
+	"Do I open a new connection by myself when the one I had was lost? Default true.
+	When false, the next request signals a P3Error and #connect is the explicit way back, as in libpq's PQreset."
+
+	^ settings at: #autoReconnect ifAbsent: [ true ]
+]
+
+{ #category : 'accessing' }
+P3Client >> autoReconnect: aBoolean [
+	"See #autoReconnect"
+
+	settings at: #autoReconnect put: aBoolean
+]
+
+{ #category : 'accessing' }
 P3Client >> backendProcessId [
 	"The process id of the server side of my connection, or nil when I am not connected."
 
@@ -295,6 +312,7 @@ P3Client >> clearSession [
 	partialWrite := false.
 	transactionStatus := nil.
 	transactionLost := false.
+	connectionLost := false.
 	extendedRequest := false
 ]
 
@@ -332,7 +350,8 @@ P3Client >> closeAfterFailure [
 	connection ifNil: [ ^ self ].
 	lost := 'TE' includes: (transactionStatus ifNil: [ $I ]).
 	self close.
-	transactionLost := lost
+	transactionLost := lost.
+	connectionLost := true
 ]
 
 { #category : 'private' }
@@ -379,7 +398,8 @@ P3Client >> connectInternal [
 		reset;
 		runAuthentication;
 		runStartup;
-		initializeConverter
+		initializeConverter.
+	connectionGeneration := connectionGeneration + 1
 ]
 
 { #category : 'public' }
@@ -417,6 +437,14 @@ P3Client >> connection [
 	When I am not connected, return nil."
 	
 	^ connection
+]
+
+{ #category : 'accessing' }
+P3Client >> connectionGeneration [
+	"How many connections I have opened. A server session lives as long as one generation:
+	what was prepared under an older one is gone."
+
+	^ connectionGeneration
 ]
 
 { #category : 'accessing' }
@@ -567,17 +595,26 @@ P3Client >> ensureConnected [
 	"Open my connection when it is not open. A connection that is still there but no longer works is
 	closed as a failure first, so a transaction open on it is remembered as lost, see #closeAfterFailure.
 	Refuse to reconnect after a connection was lost inside a transaction. The error the server sent
-	when it ended the session, if any, is the detail of that refusal."
+	when it ended the session, if any, is the detail of that refusal.
 
+	A connection that was lost outside a transaction is replaced, unless autoReconnect is off: then
+	I signal and wait for an explicit #connect. A replacement is a new server session, so I signal
+	P3ConnectionReplaced after it is open. A first connect, or one after an explicit #close, is neither."
+
+	| replacing |
 	self isConnected ifTrue: [ ^ self ].
 	self closeAfterFailure.
 	transactionLost ifTrue: [ | error |
 		error := P3Error connectionLostInTransaction.
 		discardedError ifNotNil: [ error info at: $D put: discardedError messageText ].
 		^ error signal ].
+	replacing := connectionGeneration > 0 and: [ connectionLost ].
+	(replacing and: [ self autoReconnect not ])
+		ifTrue: [ ^ P3Error connectionLost signal ].
 	self isSSL
 		ifTrue: [ self connectSSL ]
-		ifFalse: [ self connect ]
+		ifFalse: [ self connect ].
+	replacing ifTrue: [ P3ConnectionReplaced signal ]
 ]
 
 { #category : 'protocol' }
@@ -757,6 +794,8 @@ P3Client >> initialize [
 	partialWrite := false.
 	extendedRequest := false.
 	transactionLost := false.
+	connectionGeneration := 0.
+	connectionLost := false.
 	
 	self beThreadSafe
 ]
@@ -1151,8 +1190,9 @@ P3Client >> port: integer [
 { #category : 'public' }
 P3Client >> prepare: query [
 	"Create a P3PreparedStatement with a default name derived from the query string, see
-	#defaultStatementNameFor:. Preparing a query that is already prepared in this session answers that
-	statement, so both holders share it and closing it closes it for both."
+	#defaultStatementNameFor:. Preparing a query that is already prepared answers that statement, so both
+	holders share it and closing it closes it for both. When it was prepared in a session that is gone, it
+	is prepared again first."
 
 	| name existing |
 	name := self defaultStatementNameFor: query.
@@ -1160,9 +1200,12 @@ P3Client >> prepare: query [
 		at: 'prepared_statements'
 		ifPresent: [ :preparedStatements | preparedStatements at: name ifAbsent: [ nil ] ]
 		ifAbsent: [ nil ].
-	(existing notNil and: [ existing source = query and: [ self isConnected ] ])
-		ifTrue: [ ^ existing ].
-	^ self prepare: query named: name
+	(existing notNil and: [ existing source = query ])
+		ifFalse: [ ^ self prepare: query named: name ].
+	self critical: [
+		self ensureResponseRead; ensureConnected.
+		self prepareStaleStatement: existing ].
+	^ existing
 ]
 
 { #category : 'public' }
@@ -1180,6 +1223,25 @@ P3Client >> prepare: query named: queryName [
 				self parseMessageFor: query name: queryName types: #().
 				self describeMessageFor: queryName type: $S } ]
 		response: [ self readPreparedStatement: query named: queryName ]
+]
+
+{ #category : 'private' }
+P3Client >> prepareStaleStatement: aPreparedStatement [
+	"Make sure aPreparedStatement exists in my current server session. A new connection is a new session
+	and the server forgot everything prepared in the old one, so prepare its source again under its name.
+	The statement object stays the one the caller holds and takes over what the server describes now, and
+	it is the one registered under its name. When the name was already prepared again in this session for
+	the same source, that preparation is taken over instead of preparing the name twice."
+
+	| registry existing |
+	aPreparedStatement isStale ifFalse: [ ^ self ].
+	registry := properties at: 'prepared_statements' ifAbsentPut: [ Dictionary new ].
+	existing := registry at: aPreparedStatement name ifAbsent: [ nil ].
+	(existing notNil and: [ existing ~~ aPreparedStatement and: [ existing isStale not
+		and: [ existing source = aPreparedStatement source ] ] ])
+		ifFalse: [ existing := self prepare: aPreparedStatement source named: aPreparedStatement name ].
+	aPreparedStatement adoptPreparationOf: existing.
+	registry at: aPreparedStatement name put: aPreparedStatement
 ]
 
 { #category : 'accessing' }
@@ -1588,21 +1650,6 @@ P3Client >> runExtendedQueryResult: descriptions [
 ]
 
 { #category : 'private' }
-P3Client >> runExtendedRequest: messages fieldDescriptions: fieldDescriptions statement: statement inputRows: inputRows [
-	"Run an extended-query request: messages, a collection of tag -> payload associations built in
-	memory, sent together and ended by Sync. Answer one P3Result per Execute among them.
-	The source and the bound values are recorded under the monitor, once the request is sent, so
-	another process cannot change them between my write and my read."
-
-	^ self
-		runRequest: [
-			properties at: #sql_source put: statement source.
-			self writeExtendedRequest: messages.
-			inputRows do: [ :each | self logBinding: statement inputValues: each ] ]
-		response: [ self basicRunExtendedQueryResults: fieldDescriptions ]
-]
-
-{ #category : 'private' }
 P3Client >> runRequest: writeBlock response: readBlock [
 	"Write one request and read its response as a single unit. Every request goes through here.
 
@@ -1653,6 +1700,24 @@ P3Client >> runStartup [
 	message tag = $K
 		ifTrue: [ self processBackendKeyData: message readStream ]
 		ifFalse: [ ^ P3Error unexpectedMessageDuringStartup signal ] ] repeat
+]
+
+{ #category : 'private' }
+P3Client >> runStatement: aPreparedStatement inputRows: inputRows [
+	"Execute aPreparedStatement once per row of inputRows in one extended-query request, and answer one
+	P3Result per row. Each attempt first makes sure the statement exists in the current session, so a retry
+	on a new connection prepares it there before executing it. The Bind and Execute messages are then built
+	in memory and sent together, ended by Sync. The source and the bound values are recorded under the
+	monitor, once the request is sent, so another process cannot change them between my write and my read."
+
+	^ self
+		runRequest: [ | messages |
+			self prepareStaleStatement: aPreparedStatement.
+			messages := aPreparedStatement requestMessagesFor: inputRows.
+			properties at: #sql_source put: aPreparedStatement source.
+			self writeExtendedRequest: messages.
+			inputRows do: [ :each | self logBinding: aPreparedStatement inputValues: each ] ]
+		response: [ self basicRunExtendedQueryResults: aPreparedStatement fieldDescriptions ]
 ]
 
 { #category : 'private messages' }

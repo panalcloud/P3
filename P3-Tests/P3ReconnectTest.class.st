@@ -8,11 +8,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3ReconnectTest >> expectedFailures [
-	^ #( #testAnExplicitCloseIsNotALostConnection #testAutoReconnectIsOnByDefault #testFirstConnectAndExplicitReconnectSignalNothing #testLostConnectionIsReplacedAndSaysSo #testPreparedStatementBatchAfterReplacement #testPreparedStatementIsPreparedAgainAfterReplacement #testPreparedStatementReconnectsWhenTheSocketIsGone #testRetryOnANewConnectionPreparesTheStatementAgain #testStatementIsPreparedAgainAfterExplicitReconnect #testWithoutAutoReconnectALostConnectionSignals #testWithoutAutoReconnectExplicitConnectContinues )
-]
-
 { #category : 'helpers' }
 P3ReconnectTest >> loseConnection [
 	"End the session from the server side. The FATAL error is expected and ignored."

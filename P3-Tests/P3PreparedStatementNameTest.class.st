@@ -13,11 +13,6 @@ P3PreparedStatementNameTest >> byteSizeOf: aString [
 	^ (ZnCharacterEncoder utf8 encodeString: aString) size
 ]
 
-{ #category : 'accessing' }
-P3PreparedStatementNameTest >> expectedFailures [
-	^ #( #testQueryPreparedBeforeAReplacementIsPreparedAgainByPrepare )
-]
-
 { #category : 'helpers' }
 P3PreparedStatementNameTest >> nonAsciiQuery: suffix [
 	"A query of 50 characters that is more than 63 bytes long once encoded, and that differs from

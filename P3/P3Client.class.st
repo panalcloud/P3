@@ -1323,7 +1323,9 @@ P3Client >> processBackendKeyData: payload [
 ]
 
 { #category : 'private' }
-P3Client >> processDataRowUsing: description [
+P3Client >> processDataRowUsing: descriptions converters: converters [
+	"Read the DataRow I am positioned on. A NULL value, length -1, is not converted."
+
 	| count record readStream |
 	readStream := message readStream.
 	count := readStream uint16.
@@ -1331,9 +1333,14 @@ P3Client >> processDataRowUsing: description [
 	1 to: count do: [ :index | | size |
 		size := readStream uint32.
 		size = 16rFFFFFFFF
-			ifFalse: [ | object |
-				object := (description at: index) convert: readStream length: size using: converter.
-				record at: index put: object ] ].
+			ifFalse: [
+				record
+					at: index
+					put: (converter
+						convert: readStream
+						length: size
+						using: (converters at: index)
+						description: (descriptions at: index)) ] ].
 	^ record
 ]
 
@@ -1434,12 +1441,15 @@ P3Client >> readCloseComplete [
 { #category : 'private' }
 P3Client >> readDataRows: descriptions [
 	"Read the DataRow messages starting at the one I am positioned on, and leave me positioned on the
-	first message that is not one. Answer them converted through descriptions."
+	first message that is not one. Answer them converted through descriptions. The converter of each
+	column is chosen once for all the rows, see P3Converter>>#converterFor:."
 
+	| converters |
 	descriptions ifNil: [ ^ self rejectOutOfStepMessage ].
+	converters := descriptions collect: [ :each | converter converterFor: each ].
 	^ Array streamContents: [ :out |
 		[ message tag = $D ] whileTrue: [
-			out nextPut: (self processDataRowUsing: descriptions).
+			out nextPut: (self processDataRowUsing: descriptions converters: converters).
 			self readMessage ] ]
 ]
 

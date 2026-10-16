@@ -109,6 +109,13 @@ P3Converter >> byteArrayFromEscapeFormat: text [
 						ifFalse: [ out nextPut: (self octalValueOf: (in next: 3)) ] ] ] ]
 ]
 
+{ #category : 'converting' }
+P3Converter >> cannotConvertFrom: bytes length: length description: description [
+	"The converter of a type I have no converter for, see #converterFor:"
+
+	^ (P3Error cannotConvertTypeOid: description typeOid) signal
+]
+
 { #category : 'accessing' }
 P3Converter >> clientEncoding: aString [
 	"Read values with the encoding the server says it is sending. An encoding I have no encoder for
@@ -122,13 +129,20 @@ P3Converter >> clientEncoding: aString [
 
 { #category : 'converting' }
 P3Converter >> convert: bytes length: length description: description [
-	| converter |
-	converter := (map mappingAt: description typeOid ifAbsent: [ nil ])
-		ifNil: [ unknownTypeConverter ifNil: [ ^ (P3Error cannotConvertTypeOid: description typeOid) signal ] ]
-		ifNotNil: [ :mapping | mapping converter ].
-	^ converter isSymbol
-		ifTrue: [ self perform: converter with: bytes with: length with: description ]
-		ifFalse: [ converter value: bytes value: length value: description ]
+	^ self
+		convert: bytes
+		length: length
+		using: (self converterFor: description)
+		description: description
+]
+
+{ #category : 'converting' }
+P3Converter >> convert: bytes length: length using: aConverter description: description [
+	"Read one value with aConverter, one of my selectors or a block, see #converterFor:"
+
+	^ aConverter isSymbol
+		ifTrue: [ self perform: aConverter with: bytes with: length with: description ]
+		ifFalse: [ aConverter value: bytes value: length value: description ]
 ]
 
 { #category : 'converting-arrays' }
@@ -414,6 +428,18 @@ P3Converter >> convertUuidFrom: bytes length: length description: description [
 P3Converter >> convertVoidFrom: bytes length: length description: description [
 	self assert: length = 0.
 	^ nil
+]
+
+{ #category : 'converting' }
+P3Converter >> converterFor: description [
+	"The converter that reads the values of the column of description: the selector or block of its type
+	in my map, else my unknownTypeConverter, else a selector that signals that the type cannot be read.
+	The last one only signals when a value is read, so a column without values reads fine.
+	Choose it once for all the rows of a result, see P3Client>>#readDataRows:, to look the type up once."
+
+	^ (map mappingAt: description typeOid ifAbsent: [ nil ])
+		ifNil: [ unknownTypeConverter ifNil: [ #cannotConvertFrom:length:description: ] ]
+		ifNotNil: [ :mapping | mapping converter ]
 ]
 
 { #category : 'accessing' }

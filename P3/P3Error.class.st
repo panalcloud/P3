@@ -170,6 +170,13 @@ P3Error class >> unsupportedAuthenticationType: type [
 ]
 
 { #category : 'accessing' }
+P3Error class >> unsupportedSslMode: aMode [
+	^ self new
+		info: { $C->'P3041'. $M->('Unsupported sslmode "{1}", use disable or require' format: { aMode }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error >> code [
 	"Return my unique, locale independent, 5 character string code.
 	The first 2 characters are called the class.

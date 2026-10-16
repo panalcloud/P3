@@ -22,11 +22,6 @@ P3SslModeTest >> clientWithMode: aMode [
 	^ P3Client new url: 'psql://user@localhost:5432/db?sslmode=' , aMode
 ]
 
-{ #category : 'accessing' }
-P3SslModeTest >> expectedFailures [
-	^ #( #testOpportunisticModesAreRefused #testUnixSocketUrlChecksTheModeToo #testUnknownAndEmptyModesAreRefused #testVerifyModesAreRefused )
-]
-
 { #category : 'tests' }
 P3SslModeTest >> testDisableMeansNoTls [
 	self deny: (self clientWithMode: 'disable') isSSL

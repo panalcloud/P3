@@ -53,6 +53,11 @@ P3ClientTest >> benchmark1Size [
 	^ 10000
 ]
 
+{ #category : 'accessing' }
+P3ClientTest >> expectedFailures [
+	^ #( #testRetrySettings )
+]
+
 { #category : 'benchmarking' }
 P3ClientTest >> runAllTests [
 	"Runs all tests on the same connection/session"
@@ -601,6 +606,17 @@ P3ClientTest >> testQueryCatalog [
 	self assert: result rowCount equals: result numberOfRecords.
 	"each dataRow has two fields"
 	self assert: (result data allSatisfy: [ :each | each size = 2])
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testRetrySettings [
+	| probe |
+	probe := P3Client new.
+	self assert: probe retryCount equals: 10.
+	self assert: probe retryDelay equals: 5.
+	probe retryCount: 2; retryDelay: 2.
+	self assert: probe retryCount equals: 2.
+	self assert: probe retryDelay equals: 2
 ]
 
 { #category : 'tests' }

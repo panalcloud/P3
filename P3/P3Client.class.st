@@ -771,7 +771,7 @@ P3Client >> processParameterDescription: payload [
 	^ Array new: count streamContents: [ :out |
 			count timesRepeat: [ 
 				out nextPut: (P3ParameterDescription new
-					typeOid: payload int32;
+					typeOid: payload uint32;
 					yourself) ] ]
 ]
 
@@ -796,10 +796,10 @@ P3Client >> processRowDescription: payload [
 				out nextPut: (P3RowFieldDescription new
 					fieldName: (self converter encodedCStringFrom: payload);
 					tableOid: payload uint32;
-					attributeNumber: payload uint16;
+					attributeNumber: payload int16;
 					typeOid: payload uint32;
-					typeSize: payload uint16;
-					typeModifier: payload uint32;
+					typeSize: payload int16;
+					typeModifier: payload int32;
 					format: payload uint16;
 					yourself) ] ]
 ]

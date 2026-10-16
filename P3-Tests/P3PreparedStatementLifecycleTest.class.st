@@ -27,11 +27,6 @@ P3PreparedStatementLifecycleTest >> boundValuesDuring: aBlock [
 	^ bound asArray
 ]
 
-{ #category : 'accessing' }
-P3PreparedStatementLifecycleTest >> expectedFailures [
-	^ #( #testEmptyPreparedQueryKeepsTheConnection #testNoBoundEventWhenTheRequestCannotBeBuilt #testResultSourceIsThatOfItsOwnStatementWhenProcessesShareAClient #testUseAfterCloseSaysTheStatementIsClosed )
-]
-
 { #category : 'tests' }
 P3PreparedStatementLifecycleTest >> testBatchRunsAsOneImplicitTransaction [
 	| insert |

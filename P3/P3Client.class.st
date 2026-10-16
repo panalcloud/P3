@@ -139,6 +139,21 @@ P3Client >> authenticationTypes [
 ]
 
 { #category : 'protocol' }
+P3Client >> basicRunExtendedQueryResults: fieldDescriptions [
+	"Read the response to a request of Bind and Execute messages ended by one Sync: one result per
+	Execute, then one ReadyForQuery."
+
+	| queryStarted |
+	queryStarted := Time millisecondClockValue.
+	self readMessage.
+	^ Array streamContents: [ :out |
+		[ "each result will use the same start"
+		  properties at: #query_started ifAbsentPut: queryStarted.
+		  out nextPut: (self runExtendedQueryResult: fieldDescriptions).
+		  self readMessage tag = $Z ] whileFalse ]
+]
+
+{ #category : 'protocol' }
 P3Client >> basicRunQueryResult [
 	"Read the response to a Query message: one result per statement the query contained, ended by one
 	ReadyForQuery. #readMessage consumes asynchronous messages, so I only see the tags below."
@@ -192,6 +207,17 @@ P3Client >> close [
 		self clearSession.
 		connection := nil
 		 ]
+]
+
+{ #category : 'private' }
+P3Client >> closeMessageFor: aName type: aChar [
+	"The Close message for a prepared statement ($S) or a portal ($P), as a tag -> payload association.
+	See #writeExtendedRequest:."
+
+	^ $C -> (self newMessageBuilder
+		nextPutByte: aChar asInteger;
+		nextPutString: aName;
+		yourself) asBytes
 ]
 
 { #category : 'accessing' }
@@ -297,6 +323,17 @@ P3Client >> database: string [
 	Set to nil or do not set to use the default."
 	
 	settings at: #database put: string
+]
+
+{ #category : 'private' }
+P3Client >> describeMessageFor: aName type: aChar [
+	"The Describe message for a prepared statement ($S) or a portal ($P), as a tag -> payload
+	association. See #writeExtendedRequest:."
+
+	^ $D -> (self newMessageBuilder
+		nextPutByte: aChar asInteger;
+		nextPutString: aName;
+		yourself) asBytes
 ]
 
 { #category : 'protocol' }
@@ -759,6 +796,20 @@ P3Client >> open [
 	message := P3MessageBuffer new
 ]
 
+{ #category : 'private' }
+P3Client >> parseMessageFor: queryString name: statementName types: paramDataTypes [
+	"The Parse message for queryString, as a tag -> payload association. See #writeExtendedRequest:."
+
+	| builder |
+	builder := self newMessageBuilder.
+	builder
+		nextPutString: statementName;
+		nextPutString: queryString;
+		nextPutInt16: paramDataTypes size.
+	paramDataTypes do: [ :each | builder nextPutInt32: each ].
+	^ $P -> builder asBytes
+]
+
 { #category : 'accessing' }
 P3Client >> password [
 	"Return the password of my database connection.
@@ -826,45 +877,12 @@ P3Client >> prepare: query named: queryName [
 	Each prepared statement must have a unique name. Note that in a standard Postgres installation 
 	only the first 63 characters of queryName are significant."
 
-	| parameterDescriptions rowDescriptions statement |
-
-	self critical: [
-		self 
-			ensureConnected;
-			writeParseMessage: query name: queryName types: #();
-			writeDescribeMessage: queryName type: $S;
-			writeSyncMessage.
-
-		self readMessage tag = $1
-			ifFalse: [ ^ P3Error parseCompleteExpected signal ].
-
-		self readMessage tag = $t
-			ifTrue: [ parameterDescriptions := self processParameterDescription: message readStream ]
-			ifFalse: [ 
-				parameterDescriptions := #().
-				message tag = $n 
-					ifFalse: [ P3Error noDataExpected signal ] ].
-
-		self readMessage tag = $T
-			ifTrue: [ rowDescriptions := self processRowDescription: message readStream ]
-			ifFalse: [ 
-				rowDescriptions := #().
-				message tag = $n
-					ifFalse: [ P3Error noDataExpected signal ] ].
-
-		self readMessage tag = $Z
-			ifFalse: [ ^ P3Error readyForQueryExpected signal ].
-
-		statement := self 
-			createPreparedStatementNamed: queryName 
-			withParameters: parameterDescriptions 
-			andFields: rowDescriptions.
-			
-		statement source: query.
-	
-		self logPreparedStatement: statement query: query ].
-
-	^ statement
+	^ self
+		runRequest: [
+			self writeExtendedRequest: {
+				self parseMessageFor: query name: queryName types: #().
+				self describeMessageFor: queryName type: $S } ]
+		response: [ self readPreparedStatement: query named: queryName ]
 ]
 
 { #category : 'accessing' }
@@ -1010,6 +1028,16 @@ P3Client >> queryEncoding [
 ]
 
 { #category : 'private' }
+P3Client >> readCloseComplete [
+	"Read the response to a Close message ended by Sync."
+
+	self readMessage tag = $3
+		ifFalse: [ ^ P3Error closeCompleteExpected signal ].
+	self readMessage tag = $Z
+		ifFalse: [ ^ P3Error readyForQueryExpected signal ]
+]
+
+{ #category : 'private' }
 P3Client >> readDataRows: descriptions [
 	"Read the DataRow messages starting at the one I am positioned on, and leave me positioned on the
 	first message that is not one. Answer them converted through descriptions."
@@ -1019,6 +1047,17 @@ P3Client >> readDataRows: descriptions [
 		[ message tag = $D ] whileTrue: [
 			out nextPut: (self processDataRowUsing: descriptions).
 			self readMessage ] ]
+]
+
+{ #category : 'protocol' }
+P3Client >> readFieldDescriptions [
+	"Answer the result fields the server describes, empty when it answers NoData."
+
+	self readMessage tag = $T
+		ifTrue: [ ^ self processRowDescription: message readStream ].
+	message tag = $n
+		ifFalse: [ ^ P3Error noDataExpected signal ].
+	^ #()
 ]
 
 { #category : 'input/output' }
@@ -1052,6 +1091,38 @@ P3Client >> readMessageOnError: block [
 		ifTrue: [ self noteReadyForQuery ].
 	  self isAsynchronousMessage ] whileTrue: [ self processAsynchronousMessage ].
 	^ message
+]
+
+{ #category : 'protocol' }
+P3Client >> readParameterDescriptions [
+	"Answer the parameters the server describes, empty when it answers NoData."
+
+	self readMessage tag = $t
+		ifTrue: [ ^ self processParameterDescription: message readStream ].
+	message tag = $n
+		ifFalse: [ ^ P3Error noDataExpected signal ].
+	^ #()
+]
+
+{ #category : 'private' }
+P3Client >> readPreparedStatement: query named: queryName [
+	"Read what the server describes for a statement it just parsed and answer a new P3PreparedStatement
+	for it. Nothing has been executed."
+
+	| parameterDescriptions fieldDescriptions statement |
+	self readMessage tag = $1
+		ifFalse: [ ^ P3Error parseCompleteExpected signal ].
+	parameterDescriptions := self readParameterDescriptions.
+	fieldDescriptions := self readFieldDescriptions.
+	self readMessage tag = $Z
+		ifFalse: [ ^ P3Error readyForQueryExpected signal ].
+	statement := self 
+		createPreparedStatementNamed: queryName 
+		withParameters: parameterDescriptions
+		andFields: fieldDescriptions.
+	statement source: query.
+	self logPreparedStatement: statement query: query.
+	^ statement
 ]
 
 { #category : 'private' }
@@ -1160,51 +1231,58 @@ P3Client >> runAuthentication [
 			^ P3Error unexpectedMessageDuringAuthentication signal ] ] repeat
 ]
 
+{ #category : 'private' }
+P3Client >> runCloseStatementNamed: aName [
+	"Close a prepared statement server side. Close is sent with Sync, not Flush: after an error the
+	server discards every message until a Sync arrives, so with Flush an ErrorResponse here would leave
+	me waiting for a ReadyForQuery that never comes and the server dropping everything I send next."
+
+	^ self
+		runRequest: [ self writeExtendedRequest: { self closeMessageFor: aName type: $S } ]
+		response: [ self readCloseComplete ]
+]
+
 { #category : 'protocol' }
 P3Client >> runExtendedQueryResult: descriptions [
-	"Read DataRow ($D) messages until either a CommandComplete ($C) or PortalSuspended ($s) message is received."
+	"Read one result of an extended-query response, starting at the message I am positioned on:
+	BindComplete, then the DataRows up to the CommandComplete ($C) or PortalSuspended ($s) that ends
+	them. An EmptyQueryResponse ($I) replaces all of that for a query that contained no statement."
 
 	| rows result |
-
-	"Check for BindComplete message"
 	message tag = $2
 		ifFalse: [ ^ P3Error bindCompleteExpected signal ].
 	self readMessage.
-
-	rows := Array streamContents: [ :out |
-		[ 'Cs' includes: message tag ] whileFalse: [ 
-			self assert: message tag = $D.
-			out nextPut: (self processDataRowUsing: descriptions).
-			self readMessage ] ].
-	
+	message tag = $I
+		ifTrue: [
+			result := P3Result new addResult: ''; yourself.
+			result source: (properties at: #sql_source ifAbsent: nil).
+			self logResult: result.
+			^ result ].
+	rows := self readDataRows: descriptions.
+	('Cs' includes: message tag)
+		ifFalse: [ ^ self rejectUnexpectedMessage ].
 	result := P3Result 
 		descriptions: descriptions
 		data: rows 
 		results: (self converter asciiCStringFrom: message readStream).
-
 	result source: (properties at: #sql_source ifAbsent: nil).
-
 	self logResult: result.
-	 
 	^ result
 ]
 
-{ #category : 'protocol' }
-P3Client >> runExtendedQueryResults: fieldDescriptions [
-	
-	| results queryStarted |
+{ #category : 'private' }
+P3Client >> runExtendedRequest: messages fieldDescriptions: fieldDescriptions statement: statement inputRows: inputRows [
+	"Run an extended-query request: messages, a collection of tag -> payload associations built in
+	memory, sent together and ended by Sync. Answer one P3Result per Execute among them.
+	The source and the bound values are recorded under the monitor, once the request is sent, so
+	another process cannot change them between my write and my read."
 
-	self critical: [
-		queryStarted := Time millisecondClockValue.
-		self readMessage.
-		results := Array streamContents: [ :out |
-			[
-				"each result will use the same start"
-				properties at: #query_started ifAbsentPut: queryStarted.
-				out nextPut: (self runExtendedQueryResult: fieldDescriptions).
-				self readMessage tag = $Z ] whileFalse ] ].
-	
-	^ results
+	^ self
+		runRequest: [
+			properties at: #sql_source put: statement source.
+			self writeExtendedRequest: messages.
+			inputRows do: [ :each | self logBinding: statement inputValues: each ] ]
+		response: [ self basicRunExtendedQueryResults: fieldDescriptions ]
 ]
 
 { #category : 'private' }
@@ -1343,11 +1421,6 @@ P3Client >> setSSL [
 	The default is to use a plain unencrypted network connection."
 	
 	settings at: #ssl put: true
-]
-
-{ #category : 'private' }
-P3Client >> setSource: sql [
-	properties at: #sql_source put: sql
 ]
 
 { #category : 'error handling' }
@@ -1553,16 +1626,18 @@ P3Client >> verbose: flag [
 		ifFalse: [ P3LogEvent stopLoggingToTranscript ]
 ]
 
-{ #category : 'input/output' }
-P3Client >> writeDescribeMessage: aName type: aChar [
-	"Type $S to describe a prepared statement; or $P to describe a portal."
-	
-	| msgBuilder |
-	msgBuilder := self newMessageBuilder.
-	msgBuilder
-		nextPutByte: aChar asInteger;
-		nextPutString: aName.
-	self writeMessageNoFlush: msgBuilder asBytes tag: $D
+{ #category : 'private' }
+P3Client >> writeExtendedRequest: messages [
+	"Write an extended-query request: messages, a collection of tag -> payload associations, followed by
+	the Sync that ends it and asks the server for exactly one response.
+
+	The payloads are already built, which is the point: a batch that fails while its Bind messages are
+	being built must leave nothing in the socket, or the rows written so far are executed by whatever
+	request flushes next while the caller is told the batch failed."
+
+	self sendRequest: [
+		messages do: [ :each | self writeMessageNoFlush: each value tag: each key ].
+		self writeMessage: #[] tag: $S ]
 ]
 
 { #category : 'input/output' }
@@ -1594,20 +1669,6 @@ P3Client >> writeMessageNoFlush: payload [
 P3Client >> writeMessageNoFlush: payload tag: tag [
 	connection nextPut: tag asInteger.
 	self writeMessageNoFlush: payload
-]
-
-{ #category : 'input/output' }
-P3Client >> writeParseMessage: queryString name: statementName types: paramDataTypes [
-	| msgBuilder |
-	msgBuilder := self newMessageBuilder.
-	msgBuilder
-		nextPutString: statementName;
-		nextPutString: queryString;
-		nextPutInt16: paramDataTypes size.
-	paramDataTypes do: [ :each | msgBuilder nextPutInt32: each ].
-	self writeMessage: msgBuilder asBytes tag: $P 
-
-	
 ]
 
 { #category : 'input/output' }

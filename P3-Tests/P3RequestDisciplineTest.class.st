@@ -44,11 +44,6 @@ P3RequestDisciplineTest >> clients [
 ]
 
 { #category : 'accessing' }
-P3RequestDisciplineTest >> expectedFailures [
-	^ #( #testBatchBindFailureExecutesNothing #testCloseAfterAbandonedResponse #testPreparedStatementAfterAbandonedResponse )
-]
-
-{ #category : 'accessing' }
 P3RequestDisciplineTest >> statementName [
 	"The name I prepare statements under. One name is enough: each test gets its own connection."
 

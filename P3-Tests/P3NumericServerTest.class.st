@@ -17,11 +17,6 @@ P3NumericServerTest >> errorOf: aBlock [
 		do: [ :error | error ]
 ]
 
-{ #category : 'accessing' }
-P3NumericServerTest >> expectedFailures [
-	^ #( #testNonFiniteNumericInPreparedStatementSignalsP3Error )
-]
-
 { #category : 'private' }
 P3NumericServerTest >> nonFiniteLiterals [
 	"The infinities of a numeric exist from PostgreSQL 14."

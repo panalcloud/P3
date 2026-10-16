@@ -131,6 +131,15 @@ P3Error class >> readyForQueryExpected [
 ]
 
 { #category : 'accessing' }
+P3Error class >> statementClosed: statementName [
+	"A closed prepared statement has no connection and can no longer run."
+
+	^ self new
+		info: { $C->'P3053'. $M->('Prepared statement "{1}" is closed' format: { statementName }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> unexpectedMessage: tag [
 	"A message that cannot be placed in the response being read: the message stream is out of step."
 

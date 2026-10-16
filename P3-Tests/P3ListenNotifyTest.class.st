@@ -155,6 +155,19 @@ P3ListenNotifyTest >> testDroppedNotificationsAreLogged [
 	self assert: events last limit equals: 2
 ]
 
+{ #category : 'tests - semantics' }
+P3ListenNotifyTest >> testDuplicatesInOneTransactionArriveOnce [
+	"Same channel and payload in one transaction are folded by the server; other payloads are not."
+
+	client listen: self channelName.
+	notifier execute: 'BEGIN'.
+	#( 'a' 'a' 'b' 'a' ) do: [ :each | notifier notify: self channelName payload: each ].
+	notifier execute: 'COMMIT'.
+	self send: 'marker'.
+	(Delay forMilliseconds: 100) wait.
+	self assert: (self received collect: [ :each | each payload ]) asArray equals: #( 'a' 'b' 'marker' )
+]
+
 { #category : 'tests - notification' }
 P3ListenNotifyTest >> testEmptyPayloadIsEmptyString [
 	| notifications |
@@ -288,6 +301,41 @@ P3ListenNotifyTest >> testLogEventsPrintOnOneLine [
 	self assert: (events contains: [ :each | (each printString includesSubstring: 'Unlisten') ])
 ]
 
+{ #category : 'tests - acceptance' }
+P3ListenNotifyTest >> testLongPreparedStatementWithNotificationsArriving [
+	"RX1 for the extended query protocol."
+
+	| statement |
+	client listen: self channelName.
+	statement := client prepare: 'SELECT $1::int4 FROM pg_sleep(1)'.
+	self after: 200 do: [ 1 to: 5 do: [ :each | self send: each printString ] ].
+	self assert: (statement query: #( 42 )) data equals: #( #( 42 ) ).
+	self assert: (statement query: #( 43 )) data equals: #( #( 43 ) ).
+	self assertConnectionAnswersItsOwnQueries.
+	self assert: client takeNotifications size equals: 5
+]
+
+{ #category : 'tests - acceptance' }
+P3ListenNotifyTest >> testLongQueryWithNotificationsArriving [
+	"RX1: notifications sent while a query runs do not disturb its response."
+
+	client listen: self channelName.
+	self after: 200 do: [ 1 to: 5 do: [ :each | self send: each printString ] ].
+	self assert: (client query: 'SELECT 1 FROM pg_sleep(1)') data equals: #( #( 1 ) ).
+	self assertConnectionAnswersItsOwnQueries.
+	self assert: (client takeNotifications collect: [ :each | each payload ]) asArray equals: #( '1' '2' '3' '4' '5' )
+]
+
+{ #category : 'tests - semantics' }
+P3ListenNotifyTest >> testNotificationInsideATransactionArrivesAtCommit [
+	client listen: self channelName.
+	notifier execute: 'BEGIN'.
+	notifier notify: self channelName payload: 'committed'.
+	self assert: (client waitForNotification: 0.3) isNil.
+	notifier execute: 'COMMIT'.
+	self assert: (client waitForNotification: 5) payload equals: 'committed'
+]
+
 { #category : 'tests - logging' }
 P3ListenNotifyTest >> testNotificationReceivedIsLogged [
 	| events |
@@ -324,6 +372,19 @@ P3ListenNotifyTest >> testNotifyPassesThePayloadAsAParameter [
 	self assert: notifications first payload equals: payload.
 	self assert: (notifier query: 'SELECT count(*) FROM p3_listen_notify_victim') firstFieldOfFirstRecord equals: 0 ]
 		ensure: [ notifier execute: 'DROP TABLE IF EXISTS p3_listen_notify_victim' ]
+]
+
+{ #category : 'tests - semantics' }
+P3ListenNotifyTest >> testOwnNotificationsArrive [
+	"The server delivers a session's own NOTIFY to it, with its own process id."
+
+	| notifications |
+	client listen: self channelName.
+	client notify: self channelName payload: 'self'.
+	notifications := client takeNotifications.
+	self assert: notifications size equals: 1.
+	self assert: notifications first payload equals: 'self'.
+	self assert: notifications first processId equals: client backendProcessId
 ]
 
 { #category : 'tests - wait' }
@@ -405,6 +466,52 @@ P3ListenNotifyTest >> testReplacementIsSignalledAfterListeningAgain [
 			channelsSeen := self serverListeningChannels.
 			notification resume ].
 	self assert: channelsSeen equals: { self channelName } asSet
+]
+
+{ #category : 'tests - semantics' }
+P3ListenNotifyTest >> testRolledBackNotificationNeverArrives [
+	client listen: self channelName.
+	notifier execute: 'BEGIN'.
+	notifier notify: self channelName payload: 'rolled back'.
+	notifier execute: 'ROLLBACK'.
+	self send: 'marker'.
+	self assert: ((client waitForNotifications: 5) collect: [ :each | each payload ]) asArray equals: #( 'marker' )
+]
+
+{ #category : 'tests - acceptance' }
+P3ListenNotifyTest >> testThousandNotificationsDuringHundredQueries [
+	"RX2: none lost, none duplicated, in commit order, whichever operation read them."
+
+	| collected answer |
+	client listen: self channelName.
+	self after: 0 do: [ 1 to: 1000 do: [ :each | notifier notify: self channelName payload: each printString ] ].
+	1 to: 100 do: [ :each |
+		self assert: (client query: 'SELECT ' , each printString) firstFieldOfFirstRecord equals: each ].
+	collected := OrderedCollection withAll: client takeNotifications.
+	[ collected size < 1000 and: [ (answer := client waitForNotifications: 5) notEmpty ] ]
+		whileTrue: [ collected addAll: answer ].
+	self assert: (collected collect: [ :each | each payload asNumber ]) asArray equals: (1 to: 1000) asArray.
+	self assert: client droppedNotificationCount equals: 0
+]
+
+{ #category : 'tests - semantics' }
+P3ListenNotifyTest >> testTransactionsArriveInCommitOrder [
+	"Order follows commits, not the order the NOTIFYs were issued in."
+
+	| other |
+	other := self newConnectedClient.
+	[ client listen: self channelName.
+	notifier execute: 'BEGIN'.
+	notifier notify: self channelName payload: 'issued first, committed last'.
+	other execute: 'BEGIN'.
+	other notify: self channelName payload: 'issued last, committed first'.
+	other execute: 'COMMIT'.
+	notifier execute: 'COMMIT'.
+	(Delay forMilliseconds: 100) wait.
+	self
+		assert: (self received collect: [ :each | each payload ]) asArray
+		equals: #( 'issued last, committed first' 'issued first, committed last' ) ]
+		ensure: [ other close ]
 ]
 
 { #category : 'tests - notification' }

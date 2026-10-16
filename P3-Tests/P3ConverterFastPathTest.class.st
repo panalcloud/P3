@@ -1,6 +1,8 @@
 "
 I check that the fast readers of P3Converter, which read text, integers, numerics, dates, times and timestamps straight from the bytes of a message, answer what its general readers answer. Each test reads many random texts, valid and not, both ways: from a ReadStream, which the fast readers take, and from a P3GeneralReadStream, which they do not. The value, its class, its scale or offset, the error and the position of the stream afterwards must be the same.
 
+JSON is checked the same way against a NeoJSONReader on a character stream over the same bytes: the classes, the order and the values of everything read, the identity of the keys, and the bytes consumed.
+
 The texts are random with a fixed seed, so a failure can be reproduced. I need no server.
 "
 Class {
@@ -18,6 +20,14 @@ P3ConverterFastPathTest >> assertReadersAgreeOn: bytes with: selector converter:
 	self
 		assert: fast = general
 		description: [ selector , ' of ' , bytes printString , ' answers ' , fast printString , ' instead of ' , general printString ]
+]
+
+{ #category : 'private' }
+P3ConverterFastPathTest >> jsonShapeOf: anObject [
+	"What two readings of a JSON text must share: the classes and the order of all values, the
+	identity of the keys, and the values themselves"
+
+	^ String streamContents: [ :out | self printJsonShapeOf: anObject on: out ]
 ]
 
 { #category : 'private' }
@@ -39,6 +49,52 @@ P3ConverterFastPathTest >> outcomeOf: selector bytes: bytes on: streamClass conv
 			ifTrue: [ value scale ]
 			ifFalse: [ ((value isKindOf: Magnitude) and: [ value respondsTo: #offset ]) ifTrue: [ value offset ] ])
 		with: stream position
+]
+
+{ #category : 'private' }
+P3ConverterFastPathTest >> printJsonShapeOf: anObject on: out [
+	out nextPutAll: anObject class name; nextPut: $(.
+	(anObject isKindOf: Dictionary)
+		ifTrue: [
+			anObject keysAndValuesDo: [ :key :value |
+				out print: key; nextPutAll: (key isSymbol ifTrue: [ ' symbol ' ] ifFalse: [ ' string ' ]).
+				self printJsonShapeOf: value on: out ] ]
+		ifFalse: [
+			(anObject isArray)
+				ifTrue: [ anObject do: [ :each | self printJsonShapeOf: each on: out ] ]
+				ifFalse: [ out print: anObject ] ].
+	out nextPut: $)
+]
+
+{ #category : 'private' }
+P3ConverterFastPathTest >> randomJsonDepth: depth using: random [
+	"A random JSON text: objects, lists, strings with escapes and characters beyond ASCII, numbers and
+	constants, with some whitespace between the tokens"
+
+	| pick space keys strings |
+	pick := [ :choices | choices at: (random nextInteger: choices size) ].
+	space := [ pick value: #( '' '' '' ' ' '  ' ) ].
+	keys := #( '"id"' '"name"' '"año"' '"a b"' '"kéy"' '""' '"123"' '"x\"y"' ).
+	strings := #( '""' '"text"' '"José Núñez"' '"tab\there"' '"€ 10"' '"😀"' '"a\\b\/c"' '"€—"' ).
+	(depth > 2 or: [ random next < 0.4 ]) ifTrue: [
+		^ pick value: (strings , #( '0' '-7' '42' '1.5' '-2.5e-3' '1E10' '12345678901234567890' 'true' 'false' 'null' )) ].
+	^ random next < 0.5
+		ifTrue: [
+			String streamContents: [ :out |
+				out nextPut: ${.
+				(1 to: (random nextInteger: 4) - 1)
+					do: [ :each |
+						out nextPutAll: space value; nextPutAll: (pick value: keys); nextPutAll: space value; nextPut: $:;
+							nextPutAll: space value; nextPutAll: (self randomJsonDepth: depth + 1 using: random) ]
+					separatedBy: [ out nextPut: $, ].
+				out nextPutAll: space value; nextPut: $} ] ]
+		ifFalse: [
+			String streamContents: [ :out |
+				out nextPut: $[.
+				(1 to: (random nextInteger: 4) - 1)
+					do: [ :each | out nextPutAll: space value; nextPutAll: (self randomJsonDepth: depth + 1 using: random) ]
+					separatedBy: [ out nextPut: $, ].
+				out nextPutAll: space value; nextPut: $] ] ]
 ]
 
 { #category : 'private' }
@@ -87,6 +143,30 @@ P3ConverterFastPathTest >> testIntegerReaderAgreesWithIntegerReadFrom [
 	3000 timesRepeat: [ | text |
 		text := self randomTextOf: pieces count: (random nextInteger: 5) using: random.
 		self assertReadersAgreeOn: text asByteArray with: #convertIntegerFrom:length:description: converter: converter ]
+]
+
+{ #category : 'tests' }
+P3ConverterFastPathTest >> testJsonReaderAgreesWithNeoJSONReader [
+	"Random JSON texts read by the converter and by a NeoJSONReader on a character stream over the
+	same bytes. The text may have whitespace around it, which must be consumed too."
+
+	| random converter |
+	random := Random seed: 42.
+	converter := P3Converter new.
+	2000 timesRepeat: [ | text bytes stream value expected |
+		text := (#( '' ' ' '  ' ) atRandom: random) , (self randomJsonDepth: 0 using: random) , (#( '' ' ' '   ' ) atRandom: random).
+		bytes := text utf8Encoded.
+		stream := (#[ 9 ] , bytes , #[ 1 2 ]) readStream.
+		stream skip: 1.
+		value := converter convertJsonFrom: stream length: bytes size description: nil.
+		expected := (NeoJSONReader on: (ZnCharacterReadStream on: bytes readStream encoding: 'utf8'))
+			mapClass: NeoJSONObject;
+			propertyNamesAsSymbols: true;
+			next.
+		self
+			assert: (self jsonShapeOf: value) = (self jsonShapeOf: expected)
+			description: [ text , ' reads as ' , (self jsonShapeOf: value) , ' instead of ' , (self jsonShapeOf: expected) ].
+		self assert: stream position equals: bytes size + 1 ]
 ]
 
 { #category : 'tests' }

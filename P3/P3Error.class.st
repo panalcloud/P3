@@ -20,6 +20,15 @@ Class {
 }
 
 { #category : 'accessing' }
+P3Error class >> authenticationNotAllowed: methodName [
+	"The server asked for an authentication method that the client does not accept, see P3Client>>#requireAuth:."
+
+	^ self new
+		info: { $C->'P3023'. $M->('Authentication method "{1}" is not accepted, see #requireAuth:' format: { methodName }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> bindCompleteExpected [
 	^ self new 
 		info: { $C->'P3004'. $M->'BindComplete message expected' } asDictionary; 

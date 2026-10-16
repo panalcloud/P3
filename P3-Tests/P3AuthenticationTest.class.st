@@ -16,11 +16,6 @@ P3AuthenticationTest >> clientRequiring: methods [
 	^ client := P3Client new url: P3ClientTest url; requireAuth: methods; yourself
 ]
 
-{ #category : 'accessing' }
-P3AuthenticationTest >> expectedFailures [
-	^ #( #testAMethodThatIsNotRequiredFailsTheConnect #testCleartextPasswordNeedsTlsByDefault #testNoAuthenticationIsRefusedUnlessRequired #testRefusedCleartextPasswordIsNotSent #testScramIsAcceptedWhenRequired #testUnknownMethodNamesAreRefused )
-]
-
 { #category : 'running' }
 P3AuthenticationTest >> tearDown [
 	client ifNotNil: [ [ client close ] on: Error do: [ :error | ] ].
@@ -65,6 +60,14 @@ P3AuthenticationTest >> testRefusedCleartextPasswordIsNotSent [
 	error := [ plain handleAuthentication: 3. nil ] on: P3Error do: [ :e | e ].
 	self assert: error notNil.
 	self assert: error code equals: 'P3023'
+]
+
+{ #category : 'tests' }
+P3AuthenticationTest >> testRequireAuthCanBeGivenInTheUrl [
+	self
+		assert: (P3Client new url: 'psql://user@localhost/db?require_auth=scram-sha-256,md5') requireAuth
+		equals: #( 'scram-sha-256' 'md5' ).
+	self assert: (P3Client new url: 'psql://user@localhost/db') requireAuth isNil
 ]
 
 { #category : 'tests' }

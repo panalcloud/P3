@@ -193,6 +193,18 @@ P3Client >> attemptRequest: writeBlock response: readBlock canRetry: aBoolean [
 ]
 
 { #category : 'private - authentication' }
+P3Client >> authenticationMethodNameOf: type [
+	"The require_auth name of the authentication request type, see #requireAuth:. Nil for an
+	AuthenticationOk at the end of an exchange, and for the types I do not support anyway."
+
+	type = #Ok ifTrue: [
+		^ (properties includesKey: #'authentication_type') ifTrue: [ nil ] ifFalse: [ 'none' ] ].
+	^ { #CleartextPassword -> 'password'. #MD5Password -> 'md5'. #SASL -> 'scram-sha-256' } asDictionary
+		at: type
+		ifAbsent: [ nil ]
+]
+
+{ #category : 'private - authentication' }
 P3Client >> authenticationTypes [
 	^ { 
 		0 -> #Ok. 
@@ -707,10 +719,18 @@ P3Client >> giveUpReading: aNetworkError [
 
 { #category : 'private - authentication' }
 P3Client >> handleAuthentication: code [
-	| type |
+	"Answer the authentication request code of the server, after checking that I accept its method. An
+	AuthenticationOk that ends an exchange needs no check; one that comes first means no authentication."
+
+	| type method |
 	type := self authenticationTypes 
 		at: code 
 		ifAbsent: [ (P3Error unsupportedAuthenticationType: code) signal ].
+	method := self authenticationMethodNameOf: type.
+	(method notNil and: [ (self isAuthenticationAllowed: method) not ])
+		ifTrue: [
+			self close.
+			^ (P3Error authenticationNotAllowed: method) signal ].
 	properties at: #'authentication_type' ifAbsentPut: type. "else OK will overwrite"
 	^ self perform: #handleAuthentication , type
 ]
@@ -818,12 +838,28 @@ P3Client >> isAsynchronousMessage [
 ]
 
 { #category : 'testing' }
+P3Client >> isAuthenticationAllowed: methodName [
+	"Do I accept the authentication method methodName, see #requireAuth:?"
+
+	^ self requireAuth
+		ifNil: [ methodName ~= 'password' or: [ self isEncrypted ] ]
+		ifNotNil: [ :names | names includes: methodName ]
+]
+
+{ #category : 'testing' }
 P3Client >> isConnected [
 	"Return true when my connection is in working order (from my end)"
 
 	^ connection notNil
 			and: [ connection isConnected 
 				and: [ session notNil ] ]
+]
+
+{ #category : 'testing' }
+P3Client >> isEncrypted [
+	"Is my connection, if any, using TLS?"
+
+	^ connection isKindOf: ZdcSecureSocketStream
 ]
 
 { #category : 'private' }
@@ -1557,6 +1593,27 @@ P3Client >> rejectUnexpectedMessage [
 	^ self rejectOutOfStepMessage
 ]
 
+{ #category : 'accessing' }
+P3Client >> requireAuth [
+	"The authentication methods I accept, or nil for the default, see #requireAuth:."
+
+	^ settings at: #requireAuth ifAbsent: [ nil ]
+]
+
+{ #category : 'initialize-release' }
+P3Client >> requireAuth: methodNames [
+	"Accept only these authentication methods, named as in libpq's require_auth: password (a cleartext
+	password), md5, scram-sha-256 and none (the server asks for nothing). A server that asks for another
+	method fails the connect before anything is sent. Nil, the default, accepts any method I support except
+	a cleartext password on a connection without TLS."
+
+	methodNames ifNotNil: [
+		methodNames do: [ :each |
+			(#( 'password' 'md5' 'scram-sha-256' 'none' ) includes: each)
+				ifFalse: [ ^ (P3Error authenticationNotAllowed: each) signal ] ] ].
+	settings at: #requireAuth put: methodNames
+]
+
 { #category : 'private' }
 P3Client >> reset [
 	self clearSession.
@@ -2017,7 +2074,7 @@ P3Client >> url: stringOrUrl [
 	with the minimum being psql://user@localhost , for a unix socket the format is
 	postgresql:///databasename?host=/path/to/psql.socket&user=username&password=password
 	The sslmode is either disable, the default, or require. Any other value signals a P3Error,
-	see #sslModeOf:."
+	see #sslModeOf:. require_auth is a comma separated list, see #requireAuth:."
 	
 	| url useSSL |
 	url := stringOrUrl asUrl.
@@ -2036,7 +2093,8 @@ P3Client >> url: stringOrUrl [
 				password: url password ].
 	self database: url firstPathSegment.
 	useSSL ifTrue: [ self setSSL ].
-	url queryAt: #options ifPresent: [ :options | self startupOptions: options ]
+	url queryAt: #options ifPresent: [ :options | self startupOptions: options ].
+	url queryAt: #require_auth ifPresent: [ :methods | self requireAuth: ($, split: methods) asArray ]
 ]
 
 { #category : 'accessing' }

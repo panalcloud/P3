@@ -57,7 +57,7 @@ P3MessageBuffer >> rawByteBuffer [
 	^ payload originalContents
 ]
 
-{ #category : 'reading' }
+{ #category : 'initialization' }
 P3MessageBuffer >> readFrom: readStream [
 	| byte length |
 	partial := false.

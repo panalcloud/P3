@@ -177,7 +177,7 @@ P3Converter >> convertDateAndTimeFrom: bytes length: length description: descrip
 			parseDateAndTime
 ]
 
-{ #category : 'converting' }
+{ #category : 'converting-chronology' }
 P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length description: description [
 	"TIMESTAMP WITHOUT TIME ZONE (TIMESTAMP) is stored internally in Postgres the way it was inserted, its representation remains constant, with no offset added. We use the timezone of the connection to do the necessary shifting. This assumes that the timezones used during insert/update and query are the same. For this to work, the connection output format must be ISO, the default."
 
@@ -203,7 +203,7 @@ P3Converter >> convertFixedBitStringFrom: bytes length: length description: desc
 	^ P3FixedBitString readFrom: (self asciiStreamFor: bytes length: length)
 ]
 
-{ #category : 'converting' }
+{ #category : 'converting-arrays' }
 P3Converter >> convertFloatArrayFrom: bytes length: length description: description [
 	| input |
 	input := ZnLimitedReadStream on: bytes limit: length.
@@ -327,7 +327,7 @@ P3Converter >> convertTimeFrom: bytes length: length description: description [
 	^ (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTime
 ]
 
-{ #category : 'converting' }
+{ #category : 'converting-chronology' }
 P3Converter >> convertTimeWithTimezoneFrom: bytes length: length description: description [
 	"TIME WITH TIME ZONE corresponds to Time plus an offset. 
 	Time does not hold a time zone nor an offset.

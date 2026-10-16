@@ -505,7 +505,10 @@ P3ClientTest >> testJsonConversion [
 	result := client query: ('SELECT ''{1}''::json' format: { data printString }).
 	self assert: result firstFieldOfFirstRecord equals: data.
 	result := client query: ('SELECT ''{1}''::jsonb' format: { data printString }).
-	self assert: result firstFieldOfFirstRecord equals: data
+	"jsonb stores keys in its own order, so compare without key order"
+	self 
+		assert: (Dictionary newFrom: result firstFieldOfFirstRecord associations)
+		equals: (Dictionary newFrom: data associations)
 ]
 
 { #category : 'tests' }

@@ -469,6 +469,24 @@ P3Client >> database: string [
 ]
 
 { #category : 'private' }
+P3Client >> defaultStatementNameFor: query [
+	"The server keeps at most 63 bytes of a statement name and refuses a name that is in use. A query that
+	fits is its own name. A longer one is cut to whole characters and ends in a digest of the entire query,
+	so two queries that share their first bytes still get different names. The query is encoded once; the
+	cut backs off over UTF-8 continuation bytes, the encoding the startup asks for."
+
+	| bytes digest cut |
+	bytes := self converter encoder encodeString: query.
+	bytes size <= 63
+		ifTrue: [ ^ query ].
+	digest := (MD5 hashMessage: bytes) hex.
+	cut := 63 - 1 - digest size.
+	[ cut > 0 and: [ ((bytes at: cut + 1) bitAnd: 16rC0) = 16r80 ] ]
+		whileTrue: [ cut := cut - 1 ].
+	^ (self converter encoder decodeBytes: (bytes first: cut)) , '_' , digest
+]
+
+{ #category : 'private' }
 P3Client >> describeMessageFor: aName type: aChar [
 	"The Describe message for a prepared statement ($S) or a portal ($P), as a tag -> payload
 	association. See #writeExtendedRequest:."
@@ -1132,19 +1150,18 @@ P3Client >> port: integer [
 
 { #category : 'public' }
 P3Client >> prepare: query [
-	"Create a P3PreparedStatement with a default name derived from the query string. 
-	Only the first 63 characters of the name are significant. For longer queries try
-	to make a unique name by using the hash value of the query string."
+	"Create a P3PreparedStatement with a default name derived from the query string, see
+	#defaultStatementNameFor:. Preparing a query that is already prepared in this session answers that
+	statement, so both holders share it and closing it closes it for both."
 
-	| name |
-	
-	name := query.
-	name size > 63
-		ifTrue: [ 
-			| hashString |
-			hashString := name hash printStringHex.
-			name := (name copyFrom: 1 to: 62 - hashString size), '_', hashString ].
-		
+	| name existing |
+	name := self defaultStatementNameFor: query.
+	existing := properties
+		at: 'prepared_statements'
+		ifPresent: [ :preparedStatements | preparedStatements at: name ifAbsent: [ nil ] ]
+		ifAbsent: [ nil ].
+	(existing notNil and: [ existing source = query and: [ self isConnected ] ])
+		ifTrue: [ ^ existing ].
 	^ self prepare: query named: name
 ]
 

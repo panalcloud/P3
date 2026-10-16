@@ -8,7 +8,7 @@ jobs:
     container: node:latest
     services:
       postgres:
-        image: postgres:latest
+        image: postgres:18
         # empty password
         env:
           POSTGRES_DB: postgres
@@ -26,14 +26,15 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     strategy:
+      fail-fast: false
       matrix:
-        smalltalk: [ Pharo64-14, Pharo64-13, Pharo64-12 ]
+        smalltalk: [ Pharo64-14, Pharo64-13, Pharo64-12, Pharo64-11, Pharo64-10, Pharo64-9.0, Pharo64-8.0, Pharo64-7.0 ]
     name: ${{ matrix.smalltalk }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: hpi-swa/setup-smalltalkCI@v1
         with:
           smalltalk-image: ${{ matrix.smalltalk }}
       - run: smalltalkci -s ${{ matrix.smalltalk }}
         shell: bash
-        timeout-minutes: 1
+        timeout-minutes: 15

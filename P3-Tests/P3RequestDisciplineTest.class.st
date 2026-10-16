@@ -44,11 +44,6 @@ P3RequestDisciplineTest >> clients [
 ]
 
 { #category : 'accessing' }
-P3RequestDisciplineTest >> expectedFailures [
-	^ #( #testDeadSocketInsideTransactionSignals #testDeadSocketOutsideTransactionReconnects #testPrintingAConnectedClientDoesNotChangeIt #testPrintingTheClientKeepsTheLostTransactionGuard #testReconnectInsideTransactionSignals #testSessionEndedByTheServerWhileIdleIsReplacedWithoutARetry )
-]
-
-{ #category : 'accessing' }
 P3RequestDisciplineTest >> statementName [
 	"The name I prepare statements under. One name is enough: each test gets its own connection."
 
@@ -458,6 +453,23 @@ P3RequestDisciplineTest >> testRetryDelayDoesNotHoldTheMonitor [
 	"waitTimeoutSeconds: answers true when it timed out"
 	self deny: (finished waitTimeoutSeconds: 10).
 	self assert: failure notNil
+]
+
+{ #category : 'tests - retrying' }
+P3RequestDisciplineTest >> testSessionEndedByTheServerInsideATransactionSignals [
+	"The server ends a session that is inside a transaction. The next request must report the lost
+	transaction, with the reason the server gave, instead of running in autocommit."
+
+	| pid error |
+	extraClient := self newConnectedClient.
+	client execute: 'BEGIN'.
+	pid := client session.
+	extraClient query: 'SELECT pg_terminate_backend(' , pid printString , ')'.
+	(Delay forMilliseconds: 300) wait.
+	error := [ client query: 'SELECT 5'. nil ] on: P3Error do: [ :e | e ].
+	self assert: error notNil.
+	self assert: error code equals: 'P3050'.
+	self assert: client discardedError code equals: '57P01'
 ]
 
 { #category : 'tests - retrying' }

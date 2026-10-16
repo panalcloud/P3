@@ -88,7 +88,8 @@ Class {
 		'transactionStatus',
 		'discardedError',
 		'partialWrite',
-		'extendedRequest'
+		'extendedRequest',
+		'transactionLost'
 	],
 	#category : 'P3-Core',
 	#package : 'P3',
@@ -140,7 +141,7 @@ P3Client >> attemptRequest: writeBlock response: readBlock canRetry: aBoolean [
 	writeBlock value ]
 		on: NetworkError
 		do: [ :error |
-			self close.
+			self closeAfterFailure.
 			aBoolean ifFalse: [ error pass ].
 			^ #retry ].
 	^ self readResponse: readBlock
@@ -207,6 +208,7 @@ P3Client >> clearSession [
 	pendingResponses := 0.
 	partialWrite := false.
 	transactionStatus := nil.
+	transactionLost := false.
 	extendedRequest := false
 ]
 
@@ -232,6 +234,22 @@ P3Client >> close [
 ]
 
 { #category : 'private' }
+P3Client >> closeAfterFailure [
+	"Close because something went wrong, not because the caller asked.
+
+	A connection lost while a transaction was open or failed cannot simply be replaced: the server
+	rolled that transaction back, and the statements the caller still believes are inside it would run
+	in autocommit on a new connection, with its COMMIT succeeding on part of the work. Remember that,
+	so the next use says so instead of reconnecting silently. An explicit #close or #connect clears it."
+
+	| lost |
+	connection ifNil: [ ^ self ].
+	lost := 'TE' includes: (transactionStatus ifNil: [ $I ]).
+	self close.
+	transactionLost := lost
+]
+
+{ #category : 'private' }
 P3Client >> closeMessageFor: aName type: aChar [
 	"The Close message for a prepared statement ($S) or a portal ($P), as a tag -> payload association.
 	See #writeExtendedRequest:."
@@ -253,12 +271,12 @@ P3Client >> compactUrl [
 
 { #category : 'public' }
 P3Client >> connect [
-	"Connect me to a PostgreSQL database. 
+	"Connect me to a PostgreSQL database on a new connection. 
 	Run the authentication and startup protocols. Configure the session."
 
 	self critical: [ 
 		self
-			ensureOpen;
+			open;
 			connectInternal;
 			clearSSL;
 			logConnected ]
@@ -278,12 +296,12 @@ P3Client >> connectInternal [
 
 { #category : 'public' }
 P3Client >> connectSSL [
-	"Connect me to a PostgreSQL database over an encrypted SSL connection. 
+	"Connect me to a PostgreSQL database over a new encrypted SSL connection. 
 	Run the authentication and startup protocols. Configure the session."
 
 	self critical: [
 		self
-			ensureOpen;
+			open;
 			upgradeToSSL;
 			connectInternal;
 			setSSL;
@@ -383,7 +401,26 @@ P3Client >> discardResponseOrClose [
 	no longer be positioned, so close it: reconnecting on the next use is correct, while reusing it
 	would answer one request with another's response."
 
-	[ self discardResponse ] on: Error do: [ :error | self close ]
+	[ self discardResponse ] on: Error do: [ :error | self closeAfterFailure ]
+]
+
+{ #category : 'protocol' }
+P3Client >> discardUnsolicitedMessages [
+	"Read what the server sent while no response was owed. Notices, parameter status and notifications
+	can come at any time and are processed. An ErrorResponse means the server ended the session, as on a
+	restart, an idle timeout or pg_terminate_backend, before it read anything more from me: keep it as
+	#discardedError and close as a failure, so the next request opens a new session or reports a lost
+	transaction. Anything else means the stream is out of step, so close too. This does not block."
+
+	[ [ connection notNil and: [ connection isDataAvailable ] ] whileTrue: [
+		message readFrom: connection.
+		self isAsynchronousMessage
+			ifTrue: [ self processAsynchronousMessage ]
+			ifFalse: [
+				message tag = $E ifTrue: [ self noteDiscardedError ].
+				^ self closeAfterFailure ] ] ]
+		on: Error
+		do: [ :error | self closeAfterFailure ]
 ]
 
 { #category : 'accessing' }
@@ -396,16 +433,20 @@ P3Client >> discardedError [
 
 { #category : 'private' }
 P3Client >> ensureConnected [
-	self isConnected
-		ifFalse: [ 
-			self isSSL
-				ifTrue: [ self connectSSL ]
-				ifFalse: [ self connect ] ]
-]
+	"Open my connection when it is not open. A connection that is still there but no longer works is
+	closed as a failure first, so a transaction open on it is remembered as lost, see #closeAfterFailure.
+	Refuse to reconnect after a connection was lost inside a transaction. The error the server sent
+	when it ended the session, if any, is the detail of that refusal."
 
-{ #category : 'private' }
-P3Client >> ensureOpen [
-	connection ifNil: [ self open ]
+	self isConnected ifTrue: [ ^ self ].
+	self closeAfterFailure.
+	transactionLost ifTrue: [ | error |
+		error := P3Error connectionLostInTransaction.
+		discardedError ifNotNil: [ error info at: $D put: discardedError messageText ].
+		^ error signal ].
+	self isSSL
+		ifTrue: [ self connectSSL ]
+		ifFalse: [ self connect ]
 ]
 
 { #category : 'protocol' }
@@ -413,10 +454,12 @@ P3Client >> ensureResponseRead [
 	"Before asking for a new response, make sure the previous one was read. A response left unread
 	would be answered to the next request, so discard it rather than let it be mistaken for mine.
 	A request whose writing was interrupted left bytes that are not a message: nothing written after
-	them can be read by the server, so close."
+	them can be read by the server, so close. Then read what the server sent on its own, see
+	#discardUnsolicitedMessages."
 
-	partialWrite ifTrue: [ ^ self close ].
-	self isResponsePending ifTrue: [ self discardResponseOrClose ]
+	partialWrite ifTrue: [ ^ self closeAfterFailure ].
+	self isResponsePending ifTrue: [ self discardResponseOrClose ].
+	self discardUnsolicitedMessages
 ]
 
 { #category : 'error handling' }
@@ -551,6 +594,7 @@ P3Client >> initialize [
 	pendingResponses := 0.
 	partialWrite := false.
 	extendedRequest := false.
+	transactionLost := false.
 	
 	self beThreadSafe
 ]
@@ -605,6 +649,14 @@ P3Client >> isServerVersionAtLeastMajor: major minor: minor [
 			or: [ 
 				serverVersion first = major 
 					and: [ serverVersion second >= minor ] ]
+]
+
+{ #category : 'testing' }
+P3Client >> isTransactionLost [
+	"Was my connection closed by a failure while a transaction was open or failed? Then I refuse to
+	reconnect silently, see #closeAfterFailure."
+
+	^ transactionLost
 ]
 
 { #category : 'testing' }
@@ -1181,7 +1233,7 @@ P3Client >> readResponse: block [
 
 	^ [ [ block value ]
 		on: NetworkError
-		do: [ :error | self close. error pass ] ]
+		do: [ :error | self closeAfterFailure. error pass ] ]
 		on: Error
 		do: [ :error |
 			self isResponsePending ifTrue: [ self discardResponseOrClose ].
@@ -1205,7 +1257,7 @@ P3Client >> rejectOutOfStepMessage [
 
 	| tag |
 	tag := message tag.
-	self close.
+	self closeAfterFailure.
 	^ (P3Error unexpectedMessage: tag) signal
 ]
 
@@ -1412,7 +1464,7 @@ P3Client >> sendRequest: aBlock [
 
 	self noteResponseRequested.
 	partialWrite := true.
-	[ aBlock value ] on: Error do: [ :error | self close. error pass ].
+	[ aBlock value ] on: Error do: [ :error | self closeAfterFailure. error pass ].
 	partialWrite := false
 ]
 
@@ -1450,10 +1502,10 @@ P3Client >> serverVersion [
 
 { #category : 'accessing' }
 P3Client >> session [
-	"Returns the current session identifier (backend process id) if connected"
-	
-	self isConnected ifFalse: [ self clearSession ].
-	^ session
+	"Returns the current session identifier (backend process id) if connected.
+	Only reads: this is called by printing, inspecting and logging, which must not change my state."
+
+	^ self isConnected ifTrue: [ session ]
 ]
 
 { #category : 'initialize-release' }

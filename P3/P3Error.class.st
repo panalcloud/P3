@@ -82,6 +82,15 @@ P3Error class >> commitReportedAs: resultTag [
 ]
 
 { #category : 'accessing' }
+P3Error class >> connectionLostInTransaction [
+	"The connection was lost while a transaction was open: the server rolled it back."
+
+	^ self new
+		info: { $C->'P3050'. $M->'Connection lost inside a transaction, which the server rolled back. Use #connect to start a new session' } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> copyNotSupported [
 	"COPY streams its data in messages of its own, which are neither produced nor read."
 

@@ -206,10 +206,24 @@ P3FormattedStatement >> execute: arguments [
 { #category : 'public' }
 P3FormattedStatement >> executeBatch: argumentsCollection [
 	"Bind each set of arguments from the argumentsCollection given
-	to the placeholders in my SQL template and execute this statement using my client, 
-	returning the collection of results"
+	to the placeholders in my SQL template and execute this statement using my client,
+	returning the collection of results. The batch is atomic: when a set fails, the sets before it
+	are rolled back. When my client is already in a transaction, that transaction decides."
 
-	^ argumentsCollection collect: [ :each | self execute: each ]
+	| ownTransaction |
+	ownTransaction := ('TE' includes: (client transactionStatus ifNil: [ $I ])) not.
+	ownTransaction ifTrue: [ client execute: 'BEGIN' ].
+	^ [ | results commit |
+		results := argumentsCollection collect: [ :each | self execute: each ].
+		ownTransaction ifTrue: [
+			commit := client execute: 'COMMIT'.
+			commit = 'COMMIT' ifFalse: [ (P3Error commitReportedAs: commit) signal ] ].
+		results ]
+		on: Error
+		do: [ :error |
+			(ownTransaction and: [ client transactionStatus notNil and: [ 'TE' includes: client transactionStatus ] ])
+				ifTrue: [ [ client execute: 'ROLLBACK' ] on: Error do: [ :ignored | nil ] ].
+			error pass ]
 ]
 
 { #category : 'private' }

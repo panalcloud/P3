@@ -5,11 +5,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3FormattedStatementValueTest >> expectedFailures [
-	^ #( #testFailedBatchLeavesNoRows )
-]
-
 { #category : 'helpers' }
 P3FormattedStatementValueTest >> refusedValueCode [
 	^ 'P3060'

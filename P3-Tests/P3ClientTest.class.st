@@ -53,6 +53,11 @@ P3ClientTest >> benchmark1Size [
 	^ 10000
 ]
 
+{ #category : 'accessing' }
+P3ClientTest >> expectedFailures [
+	^ #( #testConnectionEventCarriesNoSecrets )
+]
+
 { #category : 'benchmarking' }
 P3ClientTest >> runAllTests [
 	"Runs all tests on the same connection/session"
@@ -264,6 +269,33 @@ P3ClientTest >> testCircleConversion [
 P3ClientTest >> testConnection [
 	self assert: client isConnected.
 	self assert: client isWorking.
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testConnectionEventCarriesNoSecrets [
+	"The password and the backend secret key, which can cancel any query of the session, stay with the client."
+
+	| other events event |
+	other := P3Client new url: 'psql://someone:s3cret@db.example:5432/db'.
+	(other instVarNamed: 'properties')
+		at: 'backend_secret_key' put: 424242;
+		at: 'backend_process_id' put: 7.
+	events := OrderedCollection new.
+	P3LogEvent announcer
+		when: P3ConnectionEstablishedEvent
+		do: [ :each | events add: each ]
+		for: self.
+	[ other logConnected ] ensure: [ P3LogEvent announcer unsubscribe: self ].
+	self assert: events size equals: 1.
+	event := events first.
+	self deny: (event settings includesKey: #password).
+	self deny: (event properties includesKey: 'backend_secret_key').
+	self assert: event user equals: 'someone'.
+	self assert: event host equals: 'db.example'.
+	self assert: (event properties at: 'backend_process_id') equals: 7.
+	self deny: (event printString includesSubstring: 's3cret').
+	self assert: other password equals: 's3cret'.
+	self assert: ((other instVarNamed: 'properties') at: 'backend_secret_key') equals: 424242
 ]
 
 { #category : 'tests' }

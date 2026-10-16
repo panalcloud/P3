@@ -1223,6 +1223,20 @@ P3Client >> newTcpSocketStream [
 ]
 
 { #category : 'private' }
+P3Client >> nextNotificationWaitingAtMost: milliseconds first: isFirst [
+	"One slice of #waitForNotification:, under my monitor. Answer the oldest queued notification, reading
+	what the server sent and then waiting at most milliseconds for more when none is queued. Nil when
+	still none."
+
+	notifications ifNotEmpty: [ ^ notifications removeFirst ].
+	self readNotificationsWhileWaiting: isFirst.
+	(notifications isEmpty and: [ milliseconds > 0 ]) ifTrue: [
+		self waitForDataAtMost: milliseconds.
+		self readNotificationsWhileWaiting: false ].
+	^ self takeNextNotification
+]
+
+{ #category : 'private' }
 P3Client >> noteDiscardedError [
 	"Remember and log an ErrorResponse read while discarding a response. When I am recovering from a
 	failure already being reported it is redundant, but when I am draining a response nobody read it is
@@ -1648,6 +1662,22 @@ P3Client >> readMessageOnError: block [
 		ifTrue: [ self noteReadyForQuery ].
 	  self isAsynchronousMessage ] whileTrue: [ self processAsynchronousMessage ].
 	^ message
+]
+
+{ #category : 'private' }
+P3Client >> readNotificationsWhileWaiting: isFirst [
+	"Read what the server sent, under my monitor, for #waitForNotification:. Its first read connects as a
+	request does. A later one finding the connection gone signals instead: the session ended during the
+	wait, and a silent replacement would hide the notifications lost with it."
+
+	| previousError |
+	previousError := discardedError.
+	self ensureResponseRead.
+	isFirst ifTrue: [ ^ self ensureConnected ].
+	self isConnected ifTrue: [ ^ self ].
+	self closeAfterFailure.
+	^ (P3Error connectionLostWhileWaiting: (discardedError == previousError
+		ifFalse: [ discardedError ifNotNil: [ :error | error messageText ] ])) signal
 ]
 
 { #category : 'protocol' }
@@ -2130,6 +2160,15 @@ P3Client >> statementTimeout: seconds [
 	settings at: #statementTimeout put: seconds
 ]
 
+{ #category : 'private' }
+P3Client >> takeNextNotification [
+	"Remove and answer the oldest queued notification, nil when none. Under my monitor."
+
+	^ notifications isEmpty
+		ifTrue: [ nil ]
+		ifFalse: [ notifications removeFirst ]
+]
+
 { #category : 'accessing' }
 P3Client >> takeNotifications [
 	"Answer the NOTIFYs collected so far and forget them, so each one is handled once. Under my monitor,
@@ -2305,6 +2344,57 @@ P3Client >> verbose: flag [
 	flag
 		ifTrue: [ P3LogEvent logToTranscript ] 
 		ifFalse: [ P3LogEvent stopLoggingToTranscript ]
+]
+
+{ #category : 'private' }
+P3Client >> waitForDataAtMost: milliseconds [
+	"Block until the socket has data, is closed, or milliseconds passed, without reading. Under my monitor,
+	see #waitForNotification:. Bytes already buffered by the stream do not count:
+	#readNotificationsWhileWaiting: read those before."
+
+	connection ifNotNil: [ :stream |
+		stream socket ifNotNil: [ :socket |
+			socket
+				waitForDataFor: milliseconds / 1000
+				ifClosed: [ ]
+				ifTimedOut: [ ] ] ]
+]
+
+{ #category : 'notifications' }
+P3Client >> waitForNotification: seconds [
+	"Answer the oldest queued notification and remove it from the queue. When none is queued, wait at
+	most seconds for one, reading from the connection without sending anything, and answer nil on timeout.
+
+	The wait holds my monitor for slices of at most 100 milliseconds and releases it in between, so other
+	processes can use me meanwhile, waiting at most one slice, and a notification their requests read is
+	answered too. The socket is only waited on under the monitor: the socket has one read semaphore, and a
+	waiter outside the monitor would take the wakeup of a process reading a response. The waiting process
+	can be terminated.
+
+	A connection lost before the wait is replaced as for any request, see #ensureConnected, and listens
+	again, see #restoreListening:. A connection lost during the wait, for example by pg_terminate_backend
+	or a server shutdown, ends it with a P3Error (P3072)."
+
+	| deadline isFirst |
+	deadline := Time millisecondClockValue + (seconds * 1000) rounded.
+	isFirst := true.
+	[ (self critical: [
+			self
+				nextNotificationWaitingAtMost: ((deadline - Time millisecondClockValue) min: 100)
+				first: isFirst ]) ifNotNil: [ :notification | ^ notification ].
+	isFirst := false.
+	Time millisecondClockValue < deadline ] whileTrue.
+	^ nil
+]
+
+{ #category : 'notifications' }
+P3Client >> waitForNotifications: seconds [
+	"Answer every queued notification and empty the queue. When none is queued, wait at most seconds for
+	the first one as #waitForNotification: does, and answer it with those that came along. Empty on timeout."
+
+	^ (self waitForNotification: seconds)
+		ifNil: [ #() ]
+		ifNotNil: [ :first | { first } , self takeNotifications ]
 ]
 
 { #category : 'private' }

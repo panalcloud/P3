@@ -109,6 +109,21 @@ P3Error class >> connectionLostInTransaction [
 ]
 
 { #category : 'accessing' }
+P3Error class >> connectionLostWhileWaiting: serverMessageOrNil [
+	"The connection went away while P3Client>>#waitForNotification: waited, for example after
+	pg_terminate_backend. serverMessageOrNil is what the server said when it ended the session."
+
+	| info |
+	info := Dictionary new.
+	info at: $C put: 'P3072'.
+	info at: $M put: 'Connection lost while waiting for notifications'.
+	serverMessageOrNil ifNotNil: [ info at: $D put: serverMessageOrNil ].
+	^ self new
+		info: info;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> copyNotSupported [
 	"COPY streams its data in messages of its own, which are neither produced nor read."
 

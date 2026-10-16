@@ -15,7 +15,8 @@ Class {
 		'stringWriteStream',
 		'asciiReadStream',
 		'asciiWriteStream',
-		'timestampClass'
+		'timestampClass',
+		'unknownTimezoneName'
 	],
 	#category : 'P3-Support',
 	#package : 'P3',
@@ -176,7 +177,7 @@ P3Converter >> convertDateAndTimeFrom: bytes length: length description: descrip
 			parseDateAndTime
 ]
 
-{ #category : 'converting-chronology' }
+{ #category : 'converting' }
 P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length description: description [
 	"TIMESTAMP WITHOUT TIME ZONE (TIMESTAMP) is stored internally in Postgres the way it was inserted, its representation remains constant, with no offset added. We use the timezone of the connection to do the necessary shifting. This assumes that the timezones used during insert/update and query are the same. For this to work, the connection output format must be ISO, the default."
 
@@ -184,7 +185,7 @@ P3Converter >> convertDateAndTimeWithoutTimezoneFrom: bytes length: length descr
 	timestamp := (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length))
 							timestampClass: timestampClass;
 							parseDateAndTime.
-	offset := self timezone offsetForTimestamp: timestamp.
+	offset := self sessionTimezone offsetForTimestamp: timestamp.
 	^ offset isZero
 		ifTrue: [ timestamp ]
 		ifFalse: [ timestamp translateTo: offset ]
@@ -326,26 +327,30 @@ P3Converter >> convertTimeFrom: bytes length: length description: description [
 	^ (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTime
 ]
 
-{ #category : 'converting-chronology' }
+{ #category : 'converting' }
 P3Converter >> convertTimeWithTimezoneFrom: bytes length: length description: description [
 	"TIME WITH TIME ZONE corresponds to Time plus an offset. 
 	Time does not hold a time zone nor an offset.
 	We compare the offset coming in with the offset for that time today 
 	in our connection's timezone, if they differ we correct to compensate.
+	The correction is made in nanoseconds: Time arithmetic works in whole seconds and would drop
+	the fraction of a second.
 	For this to work, the connection output format must be ISO, the default"
 
-	| parser time offset connectionOffset translatedTime |
-	parser := P3ISO8601Parser on: (self asciiStreamFor: bytes length: length).
-	time := parser parseTime.
-	offset := parser parseOptionalTimezoneOffset seconds.
-	connectionOffset := self timezone offsetForTimestamp: (ZTimestamp today + time).
-	^ offset = connectionOffset 
-		ifTrue: [ time ]
-		ifFalse: [ 
-			translatedTime := time subtractTime: (offset - connectionOffset).
-			^ translatedTime seconds < 0 
-				ifTrue: [ translatedTime addSeconds: 24 * 60 * 60 ]
-				ifFalse: [ translatedTime ] ]
+	| timeAndOffset time offset connectionOffset nanoSecondsPerDay shifted seconds |
+	timeAndOffset := (P3ISO8601Parser on: (self asciiStreamFor: bytes length: length)) parseTimeWithOffset.
+	time := timeAndOffset first.
+	offset := timeAndOffset second.
+	connectionOffset := self sessionTimezone offsetForTimestamp: (ZTimestamp today + time).
+	offset = connectionOffset ifTrue: [ ^ time ].
+	nanoSecondsPerDay := 86400 * 1000000000.
+	shifted := ((time asSeconds * 1000000000) + time nanoSecond - (offset - connectionOffset) asNanoSeconds) \\ nanoSecondsPerDay.
+	seconds := shifted // 1000000000.
+	^ Time
+		hour: seconds // 3600
+		minute: seconds // 60 \\ 60
+		second: seconds \\ 60
+		nanoSecond: shifted \\ 1000000000
 ]
 
 { #category : 'converting-special' }
@@ -451,12 +456,9 @@ P3Converter >> initialize [
 
 { #category : 'initialize' }
 P3Converter >> initializeFrom: properties [
-	| serverTimezone serverEncoder |
-	"Try to resolve the session/connection timezone"
-	serverTimezone := properties at: 'TimeZone' ifAbsent: [ 'GMT' ].
-	"The fallback for unknown timezones is normally GMT but can be overwritten with ZCurrentTimezone."
-	serverTimezone := [ ZTimezone id: serverTimezone ] on: Error do: [ ZCurrentTimezone value ].
-	self timezone: serverTimezone.
+	| serverEncoder |
+	"Resolve the session/connection timezone, see #serverTimezone:"
+	self serverTimezone: (properties at: 'TimeZone' ifAbsent: [ 'GMT' ]).
 	"Try to resolve the session/connection character encoder/decoder"
 	serverEncoder := properties at: 'client_encoding' ifAbsent: [ 'UTF8' ].
 	"The fallback for unknown encodings is normally UTF8 but can be overwritten ZnDefaultCharacterEncoder."
@@ -474,6 +476,14 @@ P3Converter >> initializeTypeMap [
 { #category : 'accessing' }
 P3Converter >> mapOid: anOoid type: aTypename to: aBlockOrSymbol [
 	^ map mapOid: anOoid type: aTypename to: aBlockOrSymbol
+]
+
+{ #category : 'initialize' }
+P3Converter >> noteSessionParameter: key value: value [
+	"React to a server parameter that decides how I read values. The server reports each change
+	as a ParameterStatus message."
+
+	key = 'TimeZone' ifTrue: [ ^ self serverTimezone: value ]
 ]
 
 { #category : 'converting' }
@@ -508,6 +518,23 @@ P3Converter >> scaledDecimalFrom: aString [
 	^ ScaledDecimal readFrom: text readStream
 ]
 
+{ #category : 'initialization' }
+P3Converter >> serverTimezone: aString [
+	"Shift times without a zone using the session's zone. A name that I cannot resolve, like a POSIX
+	style UTC+3, is remembered: guessing a zone would shift values by the wrong offset, so reading a
+	value that needs the zone signals instead, see #sessionTimezone."
+
+	timezone := [ ZTimezone id: aString ] on: Error do: [ nil ].
+	unknownTimezoneName := timezone ifNil: [ aString ]
+]
+
+{ #category : 'accessing' }
+P3Converter >> sessionTimezone [
+	"The zone of the session. Signal when the server reported a name that I cannot resolve."
+
+	^ timezone ifNil: [ (P3Error unknownTimezone: unknownTimezoneName) signal ]
+]
+
 { #category : 'accessing' }
 P3Converter >> timestampClass [
 	^ timestampClass
@@ -525,7 +552,15 @@ P3Converter >> timezone [
 
 { #category : 'accessing' }
 P3Converter >> timezone: anObject [
-	timezone := anObject
+	timezone := anObject.
+	unknownTimezoneName := nil
+]
+
+{ #category : 'accessing' }
+P3Converter >> timezoneName [
+	"The name of the session zone, also when I cannot resolve it."
+
+	^ timezone ifNil: [ unknownTimezoneName ] ifNotNil: [ :zone | zone id ]
 ]
 
 { #category : 'accessing' }

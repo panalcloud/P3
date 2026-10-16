@@ -777,14 +777,15 @@ P3Client >> processParameterDescription: payload [
 
 { #category : 'private' }
 P3Client >> processParameterStatus: payload [
-	"Do not yet use the converter since it is not yet initialized"
+	"Record a server parameter, and tell the converter: the session time zone decides how values without a zone are read."
 	
 	| key value |
 	
 	key := self converter asciiCStringFrom: payload.
 	value := self converter asciiCStringFrom: payload.
 		
-	properties at: key put: value
+	properties at: key put: value.
+	self converter noteSessionParameter: key value: value
 ]
 
 { #category : 'private' }
@@ -1042,13 +1043,13 @@ P3Client >> serverEncoding [
 
 { #category : 'accessing' }
 P3Client >> serverTimezone [
-	"Return the name of the timezone used by the server for this session/connection.
-	This is determined automatically from the TimeZone property of the server.
+	"Return the name of the timezone of the current session, also when the converter cannot resolve it.
+	See #converter and P3Converter>>#sessionTimezone
 	One way to set the default at the database level is with the SQL command
 	ALTER DATABASE <mydb> SET timezone TO 'UTC' "
 	
 	self ensureConnected.
-	^ self converter timezone id
+	^ self converter timezoneName
 ]
 
 { #category : 'accessing' }

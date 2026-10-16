@@ -48,6 +48,15 @@ P3Error class >> cannotFormatObject: object [
 ]
 
 { #category : 'accessing' }
+P3Error class >> cannotReadInfinity: aText [
+	"A date or timestamp can be infinity or -infinity. Date and DateAndTime have no infinite value."
+
+	^ self new
+		info: { $C->'P3035'. $M->('Cannot read "{1}" as a date or timestamp, it is not a finite point in time. Select it cast to text to read it' format: { aText }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> cannotRepresentNumeric: numericText [
 	"A numeric can be NaN, Infinity or -Infinity. A ScaledDecimal is a fraction and has none of them."
 
@@ -123,6 +132,15 @@ P3Error class >> unexpectedMessageDuringAuthentication [
 P3Error class >> unexpectedMessageDuringStartup [
 	^ self new 
 		info: { $C->'P3021'. $M->'Unexpected message during startup' } asDictionary; 
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> unknownTimezone: zoneName [
+	"The session time zone has a name that cannot be resolved, so a time without a zone cannot be placed."
+
+	^ self new
+		info: { $C->'P3036'. $M->('Cannot read a time without a zone: the server time zone "{1}" is unknown, use a named zone with SET TIME ZONE' format: { zoneName }) } asDictionary;
 		yourself
 ]
 

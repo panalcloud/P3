@@ -19,11 +19,6 @@ P3ISO8601ParserTest >> assertRefused: aBlock description: aString [
 		description: aString , ' was not refused, it gave ' , outcome printString
 ]
 
-{ #category : 'accessing' }
-P3ISO8601ParserTest >> expectedFailures [
-	^ #( #testBeforeCommonEra #testDateSeparatorsAndShapeAreStrict #testInfinityIsRefused #testLeapDayBeforeCommonEra #testOffsetWithSeconds #testTimestampAndTimeShapeAreStrict #testValuesTheServerCanPrintStillRead )
-]
-
 { #category : 'tests' }
 P3ISO8601ParserTest >> testBeforeCommonEra [
 	"The server prints year 1 BC as 0001 BC. The image counts astronomical years, where 1 BC is year 0 and

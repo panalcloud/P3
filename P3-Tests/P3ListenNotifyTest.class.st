@@ -51,6 +51,14 @@ P3ListenNotifyTest >> logEventsOf: eventClass during: aBlock [
 ]
 
 { #category : 'private' }
+P3ListenNotifyTest >> millisecondsToRun: aBlock [
+	| start |
+	start := Time millisecondClockValue.
+	aBlock value.
+	^ Time millisecondsSince: start
+]
+
+{ #category : 'private' }
 P3ListenNotifyTest >> received [
 	"Run a query on my client so that it reads what the server queued for it, and answer the notifications it collected."
 
@@ -253,6 +261,18 @@ P3ListenNotifyTest >> testNotifyPassesThePayloadAsAParameter [
 		ensure: [ notifier execute: 'DROP TABLE IF EXISTS p3_listen_notify_victim' ]
 ]
 
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testQueriesFromOtherProcessesRunWhileWaiting [
+	"A wait in progress delays another process's queries by at most one slice of 100 milliseconds."
+
+	| waiter elapsed |
+	client listen: self channelName.
+	waiter := [ client waitForNotification: 10 ] forkAt: Processor userBackgroundPriority + 1.
+	[ (Delay forMilliseconds: 100) wait.
+	elapsed := self millisecondsToRun: [ 1 to: 5 do: [ :each | client query: 'SELECT 1' ] ].
+	self assert: elapsed < 1000 ] ensure: [ waiter terminate ]
+]
+
 { #category : 'tests - queue' }
 P3ListenNotifyTest >> testQueueDropsTheOldestBeyondItsLimit [
 	| notifications |
@@ -323,4 +343,106 @@ P3ListenNotifyTest >> testUnlistenStopsDelivery [
 	self send: 'after'.
 	self assert: self received isEmpty.
 	self assert: client listeningChannels isEmpty
+]
+
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testWaitAnswersANotificationSentLater [
+	| answer elapsed |
+	client listen: self channelName.
+	self after: 500 do: [ self send: 'late' ].
+	elapsed := self millisecondsToRun: [ answer := client waitForNotification: 5 ].
+	self assert: answer payload equals: 'late'.
+	self assert: (elapsed between: 400 and: 1200).
+	self deny: client hasNotifications.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testWaitAnswersTheQueuedNotificationsFirst [
+	| elapsed first second |
+	client listen: self channelName.
+	self send: 'one'; send: 'two'.
+	client query: 'SELECT 1'.
+	elapsed := self millisecondsToRun: [
+		first := client waitForNotification: 5.
+		second := client waitForNotification: 5 ].
+	self assert: first payload equals: 'one'.
+	self assert: second payload equals: 'two'.
+	self assert: elapsed < 500
+]
+
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testWaitEndsWhenTheBackendIsTerminated [
+	| pid elapsed error |
+	client listen: self channelName.
+	pid := client backendProcessId.
+	self after: 300 do: [ notifier query: 'SELECT pg_terminate_backend(' , pid printString , ')' ].
+	elapsed := self millisecondsToRun: [
+		error := [ client waitForNotification: 10. nil ] on: P3Error do: [ :e | e ] ].
+	self assert: error notNil.
+	self assert: error code equals: 'P3072'.
+	self assert: elapsed < 1300.
+	self deny: client isConnected
+]
+
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testWaitForNotificationsAnswersAllPending [
+	| answer |
+	client listen: self channelName.
+	self assert: (client waitForNotifications: 0.2) isEmpty.
+	self send: 'one'; send: 'two'; send: 'three'.
+	answer := client waitForNotifications: 5.
+	self assert: (answer collect: [ :each | each payload ]) asArray equals: #( 'one' 'two' 'three' ).
+	self deny: client hasNotifications
+]
+
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testWaitReadsNotificationsThatArrivedWhileIdle [
+	"Nobody queried after the NOTIFY: the wait itself has to read it from the connection."
+
+	| answer |
+	client listen: self channelName.
+	self send: 'idle'.
+	answer := client waitForNotification: 5.
+	self assert: answer payload equals: 'idle'
+]
+
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testWaitTimesOutWithoutTraffic [
+	| answer elapsed |
+	client listen: self channelName.
+	elapsed := self millisecondsToRun: [ answer := client waitForNotification: 2 ].
+	self assert: answer isNil.
+	self assert: (elapsed between: 1900 and: 2700).
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testWaiterSeesANotificationReadByAnotherProcess [
+	"Another process sharing the client may read the notification with its own query: the waiter must
+	still get it, and that query must not be held up by the waiter, beyond one slice of its wait."
+
+	| answer done elapsed |
+	client listen: self channelName.
+	done := Semaphore new.
+	[ answer := client waitForNotification: 5. done signal ] forkAt: Processor userBackgroundPriority + 1.
+	(Delay forMilliseconds: 100) wait.
+	self send: 'shared'.
+	elapsed := self millisecondsToRun: [ client query: 'SELECT 1' ].
+	self assert: elapsed < 500.
+	self assert: (done waitTimeoutMilliseconds: 1500) not.
+	self assert: answer payload equals: 'shared'
+]
+
+{ #category : 'tests - wait' }
+P3ListenNotifyTest >> testWaitingProcessCanBeTerminated [
+	"Terminating the waiter leaves the client usable by others at once."
+
+	| waiter elapsed |
+	client listen: self channelName.
+	waiter := [ client waitForNotification: 30 ] forkAt: Processor userBackgroundPriority + 1.
+	(Delay forMilliseconds: 300) wait.
+	waiter terminate.
+	elapsed := self millisecondsToRun: [ self assertConnectionAnswersItsOwnQueries ].
+	self assert: elapsed < 1000
 ]

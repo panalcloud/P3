@@ -83,7 +83,11 @@ Class {
 		'converter',
 		'message',
 		'access',
-		'notifications'
+		'notifications',
+		'pendingResponses',
+		'transactionStatus',
+		'discardedError',
+		'partialWrite'
 	],
 	#category : 'P3-Core',
 	#package : 'P3',
@@ -105,6 +109,22 @@ P3Client >> asCString: string [
 	^ bytes
 ]
 
+{ #category : 'private' }
+P3Client >> attemptRequest: writeBlock response: readBlock canRetry: aBoolean [
+	"One try of #runRequest:response:, under the monitor. Answer #retry when the request did not reach the
+	server and aBoolean allows another try, otherwise the result of readBlock."
+
+	[ self ensureResponseRead.
+	self ensureConnected.
+	writeBlock value ]
+		on: NetworkError
+		do: [ :error |
+			self close.
+			aBoolean ifFalse: [ error pass ].
+			^ #retry ].
+	^ self readResponse: readBlock
+]
+
 { #category : 'private - authentication' }
 P3Client >> authenticationTypes [
 	^ { 
@@ -116,6 +136,21 @@ P3Client >> authenticationTypes [
 		7 -> #GSS.
 		9 -> #SSPI.
 		10 -> #SASL } asDictionary
+]
+
+{ #category : 'protocol' }
+P3Client >> basicRunQueryResult [
+	"Read the response to a Query message: one result per statement the query contained, ended by one
+	ReadyForQuery. #readMessage consumes asynchronous messages, so I only see the tags below."
+
+	| result |
+	result := P3Result new.
+	self readMessage.
+	[ self readQueryResultInto: result.
+	  self readMessage tag = $Z ] whileFalse.
+	result source: (properties at: #sql_source ifAbsent: nil).
+	self logResult: result.
+	^ result
 ]
 
 { #category : 'initialize-release' }
@@ -132,7 +167,10 @@ P3Client >> clearSSL [
 
 { #category : 'private' }
 P3Client >> clearSession [
-	session := nil
+	session := nil.
+	pendingResponses := 0.
+	partialWrite := false.
+	transactionStatus := nil
 ]
 
 { #category : 'private messages' }
@@ -261,6 +299,38 @@ P3Client >> database: string [
 	settings at: #database put: string
 ]
 
+{ #category : 'protocol' }
+P3Client >> discardResponse [
+	"Read what is left of the responses I am in the middle of, up to and including the ReadyForQuery
+	that ends the last one. Messages are length prefixed, so I skip a payload without interpreting it.
+	Asynchronous messages are still processed, because they carry state and notifications that arrive
+	once. An ErrorResponse is kept as #discardedError rather than signalled: signalling would replace
+	the error I am recovering from, or surprise a caller that is not in a query at all."
+
+	[ self isResponsePending ] whileTrue: [
+		message readFrom: connection.
+		message tag = $Z ifTrue: [ self noteReadyForQuery ].
+		message tag = $E ifTrue: [ self noteDiscardedError ].
+		self isAsynchronousMessage ifTrue: [ self processAsynchronousMessage ] ]
+]
+
+{ #category : 'protocol' }
+P3Client >> discardResponseOrClose [
+	"Discard the rest of the response I am in the middle of. If that cannot be done my connection can
+	no longer be positioned, so close it: reconnecting on the next use is correct, while reusing it
+	would answer one request with another's response."
+
+	[ self discardResponse ] on: Error do: [ :error | self close ]
+]
+
+{ #category : 'accessing' }
+P3Client >> discardedError [
+	"The first ErrorResponse I read while discarding a response, if any. Nobody was waiting for it, so
+	it is kept here for inspection instead of being signalled. Cleared by #reset."
+
+	^ discardedError
+]
+
 { #category : 'private' }
 P3Client >> ensureConnected [
 	self isConnected
@@ -273,6 +343,17 @@ P3Client >> ensureConnected [
 { #category : 'private' }
 P3Client >> ensureOpen [
 	connection ifNil: [ self open ]
+]
+
+{ #category : 'protocol' }
+P3Client >> ensureResponseRead [
+	"Before asking for a new response, make sure the previous one was read. A response left unread
+	would be answered to the next request, so discard it rather than let it be mistaken for mine.
+	A request whose writing was interrupted left bytes that are not a message: nothing written after
+	them can be read by the server, so close."
+
+	partialWrite ifTrue: [ ^ self close ].
+	self isResponsePending ifTrue: [ self discardResponseOrClose ]
 ]
 
 { #category : 'error handling' }
@@ -404,6 +485,8 @@ P3Client >> initialize [
 	settings := IdentityDictionary new.
 	properties := Dictionary new.
 	notifications := OrderedCollection new.
+	pendingResponses := 0.
+	partialWrite := false.
 	
 	self beThreadSafe
 ]
@@ -429,6 +512,14 @@ P3Client >> isConnected [
 	^ connection notNil
 			and: [ connection isConnected 
 				and: [ session notNil ] ]
+]
+
+{ #category : 'testing' }
+P3Client >> isResponsePending [
+	"Is a response I asked for still unread? True between writing a Query or Sync message and reading
+	the ReadyForQuery that ends the last outstanding response. See #pendingResponses."
+
+	^ pendingResponses > 0
 ]
 
 { #category : 'testing' }
@@ -613,6 +704,38 @@ P3Client >> newMessageBuilder [
 	^ P3MessageBuilder newWithEncoder: self converter encoder
 ]
 
+{ #category : 'private' }
+P3Client >> noteDiscardedError [
+	"Remember and log an ErrorResponse read while discarding a response. When I am recovering from a
+	failure already being reported it is redundant, but when I am draining a response nobody read it is
+	the only trace of it: a COMMIT that failed on a serialization error would otherwise vanish."
+
+	| error |
+	error := P3Error new
+		info: (self errorNoticeInfo: message readStream);
+		yourself.
+	discardedError ifNil: [ discardedError := error ].
+	self logError: error
+]
+
+{ #category : 'private' }
+P3Client >> noteReadyForQuery [
+	"ReadyForQuery ends one response and carries the transaction status, so one fewer response is
+	outstanding and I am positioned at the start of the next one."
+
+	pendingResponses := (pendingResponses - 1) max: 0.
+	transactionStatus := message readStream next asCharacter
+]
+
+{ #category : 'private' }
+P3Client >> noteResponseRequested [
+	"A Query or Sync message asks the server for a response ended by exactly one ReadyForQuery. I
+	count them instead of remembering that there is one, because a caller that abandons a response
+	and then sends another request leaves two outstanding, and draining has to reach the last."
+
+	pendingResponses := pendingResponses + 1
+]
+
 { #category : 'accessing' }
 P3Client >> notifications [
 	"The NOTIFYs collected while reading responses, oldest first. See #takeNotifications to consume
@@ -650,6 +773,14 @@ P3Client >> password: string [
 	Set to nil or don't set to use no password."
 
 	settings at: #password put: string
+]
+
+{ #category : 'accessing' }
+P3Client >> pendingResponses [
+	"How many responses the server still owes me: one per Query or Sync message written, one less per
+	ReadyForQuery read. Normally 0 or 1."
+
+	^ pendingResponses
 ]
 
 { #category : 'accessing' }
@@ -864,12 +995,11 @@ P3Client >> query: query [
 	Descriptions is a collection of row field description objects, if any.
 	Data is a collection of rows with fully converted field values as objects, if any."
 
-	^ self critical: [
-		self withConnection: [
-			self ensureConnected.
+	^ self
+		runRequest: [
 			properties at: #sql_source put: query.
-			self writeQueryMessage: query.
-			self runQueryResult ] ]
+			self writeQueryMessage: query ]
+		response: [ self basicRunQueryResult ]
 ]
 
 { #category : 'accessing' }
@@ -877,6 +1007,18 @@ P3Client >> queryEncoding [
 	"An alias used by PharoDatabaseAccessor, kept for compatibility"
 	
 	^ self serverEncoding
+]
+
+{ #category : 'private' }
+P3Client >> readDataRows: descriptions [
+	"Read the DataRow messages starting at the one I am positioned on, and leave me positioned on the
+	first message that is not one. Answer them converted through descriptions."
+
+	descriptions ifNil: [ ^ self rejectOutOfStepMessage ].
+	^ Array streamContents: [ :out |
+		[ message tag = $D ] whileTrue: [
+			out nextPut: (self processDataRowUsing: descriptions).
+			self readMessage ] ]
 ]
 
 { #category : 'input/output' }
@@ -906,14 +1048,71 @@ P3Client >> readMessageOnError: block [
 			info := self errorNoticeInfo: message readStream.
 			block cull: info.
 			self signal: P3Error using: info ].
+	  message tag = $Z
+		ifTrue: [ self noteReadyForQuery ].
 	  self isAsynchronousMessage ] whileTrue: [ self processAsynchronousMessage ].
 	^ message
+]
+
+{ #category : 'private' }
+P3Client >> readQueryResultInto: result [
+	"Read one result of a Query response, starting at the message I am positioned on: an optional
+	RowDescription with the DataRows that follow it, then the CommandComplete that ends the result. An
+	EmptyQueryResponse replaces all of that for a query that contained no statement."
+
+	message tag = $I
+		ifTrue: [ ^ result addResult: '' ].
+	message tag = $T
+		ifTrue: [
+			result descriptions: (self processRowDescription: message readStream).
+			self readMessage.
+			result data: (self readDataRows: result descriptions) ].
+	message tag = $C
+		ifFalse: [ ^ self rejectUnexpectedMessage ].
+	result addResult: (self converter asciiCStringFrom: message readStream)
+]
+
+{ #category : 'private' }
+P3Client >> readResponse: block [
+	"Read a response by evaluating block. When that fails before ReadyForQuery was read, discard the
+	rest of the response first, so I stay positioned at the start of the next one, and only then
+	re-signal. A failure the server reported has already been read up to ReadyForQuery, which is why I
+	ask #isResponsePending instead of assuming.
+
+	A network failure is different: draining would wait on the same broken socket, so close instead."
+
+	^ [ [ block value ]
+		on: NetworkError
+		do: [ :error | self close. error pass ] ]
+		on: Error
+		do: [ :error |
+			self isResponsePending ifTrue: [ self discardResponseOrClose ].
+			error pass ]
+]
+
+{ #category : 'private' }
+P3Client >> rejectOutOfStepMessage [
+	"A message I cannot place in the response I am reading means I no longer know where the next one
+	starts, so my connection cannot be positioned: close it rather than read on."
+
+	| tag |
+	tag := message tag.
+	self close.
+	^ (P3Error unexpectedMessage: tag) signal
+]
+
+{ #category : 'private' }
+P3Client >> rejectUnexpectedMessage [
+	"Refuse the message I am positioned on, which does not belong where the response I am reading has arrived."
+
+	^ self rejectOutOfStepMessage
 ]
 
 { #category : 'private' }
 P3Client >> reset [
 	self clearSession.
 	properties removeAll.
+	discardedError := nil.
 	converter := nil
 ]
 
@@ -1008,24 +1207,29 @@ P3Client >> runExtendedQueryResults: fieldDescriptions [
 	^ results
 ]
 
-{ #category : 'protocol' }
-P3Client >> runQueryResult [
-	| result |
-	result := P3Result new.
-	self readMessage. 
-	[ 
-		message tag = $T
-			ifTrue: [ result descriptions: (self processRowDescription: message readStream) ].
-		message tag = $C
-			ifFalse: [ 
-				result data: (Array streamContents: [ :out | 
-					[ self readMessage tag = $C ] whileFalse: [ 
-						self assert: message tag = $D.
-						out nextPut: (self processDataRowUsing: result descriptions) ] ]) ].
-		result addResult: (self converter asciiCStringFrom: message readStream).
-		self readMessage tag = $Z ] whileFalse.
-	result source: (properties at: #sql_source ifAbsent: nil).
-	self logResult: result.
+{ #category : 'private' }
+P3Client >> runRequest: writeBlock response: readBlock [
+	"Write one request and read its response as a single unit. Every request goes through here.
+
+	The monitor is held for both halves, so another process cannot place its own request between my
+	write and my read. A response nobody read is drained before a new one is asked for, and only then
+	is the connection checked: a drain that has to close would otherwise leave the request written to
+	nothing.
+
+	A network failure before the server received the request is retried on a fresh connection,
+	because nothing ran. Once the request is sent, a network failure is not retried, see
+	#readResponse:, running it again could execute it twice. The delay between retries is waited
+	outside the monitor, so other processes can use me meanwhile."
+
+	| remaining result |
+	remaining := self retryCount.
+	[ result := self critical: [
+			self attemptRequest: writeBlock response: readBlock canRetry: remaining > 0 ].
+	result == #retry ] whileTrue: [
+		remaining < self retryCount ifTrue: [
+			self logRetryConnection: remaining.
+			self retryDelay seconds wait ].
+		remaining := remaining - 1 ].
 	^ result
 ]
 
@@ -1076,6 +1280,21 @@ P3Client >> scramSHA256 [
 		sha256;
 		password: self password;
 		yourself
+]
+
+{ #category : 'private' }
+P3Client >> sendRequest: aBlock [
+	"Write one complete request by evaluating aBlock, the server owes me one response for it.
+
+	The response is noted as owed before the first byte is written, and the write is marked partial until
+	aBlock returns. A process terminated in between runs no handler, so the next request finds either a
+	response to discard or a broken message on the socket, which only closing removes. A failure while
+	writing closes for the same reason, see #ensureResponseRead."
+
+	self noteResponseRequested.
+	partialWrite := true.
+	[ aBlock value ] on: Error do: [ :error | self close. error pass ].
+	partialWrite := false
 ]
 
 { #category : 'accessing' }
@@ -1232,6 +1451,15 @@ P3Client >> timestampClass: timestampClass [
 	settings at: #timestampClass put: timestampClass
 ]
 
+{ #category : 'accessing' }
+P3Client >> transactionStatus [
+	"The status byte of the last ReadyForQuery I read: $I outside a transaction, $T inside one,
+	$E inside one that failed and rejects further queries until it ends. Nil before the first
+	response has been read."
+
+	^ transactionStatus
+]
+
 { #category : 'protocol' }
 P3Client >> upgradeToSSL [
 	| reply |
@@ -1325,25 +1553,6 @@ P3Client >> verbose: flag [
 		ifFalse: [ P3LogEvent stopLoggingToTranscript ]
 ]
 
-{ #category : 'private' }
-P3Client >> withConnection: block [
-	"Execute block, code that will use my connection.
-	Handle network errors with a retry/reconnection scheme"
-	
-	^ [ block value "first try" ] 
-		on: NetworkError 
-		do: [ 
-			self close. "first immediate retry"
-			self retryCount to: 1 by: -1 do: [ :remaining | 
-				[ ^ block value ]
-					on: NetworkError 
-					do: [ 
-						self close. "retry after wait"
-						self logRetryConnection: remaining.
-						self retryDelay seconds wait ] ].
-			block value "final unprotected try" ]
-]
-
 { #category : 'input/output' }
 P3Client >> writeDescribeMessage: aName type: aChar [
 	"Type $S to describe a prepared statement; or $P to describe a portal."
@@ -1403,19 +1612,21 @@ P3Client >> writeParseMessage: queryString name: statementName types: paramDataT
 
 { #category : 'input/output' }
 P3Client >> writeQueryMessage: queryString [
-	| encoder size |
-	connection nextPut: $Q asInteger.
-	encoder := self converter encoder.
-	size := (encoder encodedByteCountForString: queryString) + 5.
-	4 to: 1 by: -1 do: [ :index | connection nextPut: (size byteAt: index) ].
-	queryString do: [ :each | encoder nextPut: each toStream: connection ].
-	connection nextPut: 0.
-	connection flush.
+	"Write a Query message, the whole of a simple-query request. The message is built in memory first,
+	so a failure while encoding queryString leaves the socket untouched. See #sendRequest:."
+
+	| payload |
+	payload := (self newMessageBuilder
+		nextPutString: queryString;
+		yourself) asBytes.
+	self sendRequest: [ self writeMessage: payload tag: $Q ].
 	self logQuery: queryString
 ]
 
 { #category : 'input/output' }
 P3Client >> writeSyncMessage [
-	self writeMessage: #[] tag: $S. 
+	"Sync on its own, ending an extended-query request and asking the server for one response.
+	See #writeExtendedRequest: for the usual case, where it follows the messages it ends."
 
+	self sendRequest: [ self writeMessage: #[] tag: $S ]
 ]

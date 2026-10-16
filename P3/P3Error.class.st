@@ -131,6 +131,15 @@ P3Error class >> readyForQueryExpected [
 ]
 
 { #category : 'accessing' }
+P3Error class >> unexpectedMessage: tag [
+	"A message that cannot be placed in the response being read: the message stream is out of step."
+
+	^ self new
+		info: { $C->'P3006'. $M->('Unexpected message {1} while reading a response' format: { tag asString }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> unexpectedMessageDuringAuthentication [
 	^ self new 
 		info: { $C->'P3020'. $M->'Unexpected message during authentication' } asDictionary; 

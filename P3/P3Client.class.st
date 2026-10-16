@@ -87,7 +87,8 @@ Class {
 		'pendingResponses',
 		'transactionStatus',
 		'discardedError',
-		'partialWrite'
+		'partialWrite',
+		'extendedRequest'
 	],
 	#category : 'P3-Core',
 	#package : 'P3',
@@ -97,6 +98,26 @@ Class {
 { #category : 'instance creation' }
 P3Client class >> url: anUrl [
 	^ self new url: anUrl 
+]
+
+{ #category : 'private' }
+P3Client >> abandonCopyIn [
+	"The server sent CopyInResponse and waits for data that I do not send. Tell it to abandon the copy:
+	it answers with an ErrorResponse, and the response then ends normally.
+
+	How it ends depends on the request. A simple query ends with the ReadyForQuery that follows the
+	error. An extended one does not: during copy-in the server ignores Flush and Sync, so the Sync that
+	ended the request was dropped, and after the error it discards every message until a Sync that
+	it has not got. Send that one now. It replaces the one that was dropped, so the number of
+	responses owed does not change and it is not counted. A second Sync after a simple query would
+	be answered with a ReadyForQuery that nobody reads."
+
+	self
+		writeMessage: (self newMessageBuilder
+			nextPutString: 'COPY FROM STDIN is not supported by P3';
+			yourself) asBytes
+		tag: $f.
+	extendedRequest ifTrue: [ self writeMessage: #[] tag: $S ]
 ]
 
 { #category : 'private' }
@@ -185,7 +206,8 @@ P3Client >> clearSession [
 	session := nil.
 	pendingResponses := 0.
 	partialWrite := false.
-	transactionStatus := nil
+	transactionStatus := nil.
+	extendedRequest := false
 ]
 
 { #category : 'private messages' }
@@ -342,12 +364,16 @@ P3Client >> discardResponse [
 	that ends the last one. Messages are length prefixed, so I skip a payload without interpreting it.
 	Asynchronous messages are still processed, because they carry state and notifications that arrive
 	once. An ErrorResponse is kept as #discardedError rather than signalled: signalling would replace
-	the error I am recovering from, or surprise a caller that is not in a query at all."
+	the error I am recovering from, or surprise a caller that is not in a query at all.
+
+	A CopyInResponse in what is left is a COPY FROM STDIN that nobody will feed. The server waits for
+	data before it goes on, so I abandon the copy, see #abandonCopyIn, or the ReadyForQuery never comes."
 
 	[ self isResponsePending ] whileTrue: [
 		message readFrom: connection.
 		message tag = $Z ifTrue: [ self noteReadyForQuery ].
 		message tag = $E ifTrue: [ self noteDiscardedError ].
+		message tag = $G ifTrue: [ self abandonCopyIn ].
 		self isAsynchronousMessage ifTrue: [ self processAsynchronousMessage ] ]
 ]
 
@@ -524,6 +550,7 @@ P3Client >> initialize [
 	notifications := OrderedCollection new.
 	pendingResponses := 0.
 	partialWrite := false.
+	extendedRequest := false.
 	
 	self beThreadSafe
 ]
@@ -1162,6 +1189,16 @@ P3Client >> readResponse: block [
 ]
 
 { #category : 'private' }
+P3Client >> rejectCopyIn [
+	"COPY FROM STDIN waits for the caller to send the data. Abandon the copy before reporting it, so the
+	response ends with a ReadyForQuery I can read instead of blocking until the timeout: closing here
+	would lose the temporary objects the copy was written for. See #abandonCopyIn."
+
+	self abandonCopyIn.
+	^ P3Error copyNotSupported signal
+]
+
+{ #category : 'private' }
 P3Client >> rejectOutOfStepMessage [
 	"A message I cannot place in the response I am reading means I no longer know where the next one
 	starts, so my connection cannot be positioned: close it rather than read on."
@@ -1174,8 +1211,12 @@ P3Client >> rejectOutOfStepMessage [
 
 { #category : 'private' }
 P3Client >> rejectUnexpectedMessage [
-	"Refuse the message I am positioned on, which does not belong where the response I am reading has arrived."
+	"Refuse the message I am positioned on, which does not belong where the response I am reading has
+	arrived. A COPY response needs its data streamed, which I do not support; anything else means the
+	message stream is out of step."
 
+	message tag = $G ifTrue: [ ^ self rejectCopyIn ].
+	('HW' includes: message tag) ifTrue: [ ^ P3Error copyNotSupported signal ].
 	^ self rejectOutOfStepMessage
 ]
 
@@ -1637,7 +1678,8 @@ P3Client >> writeExtendedRequest: messages [
 
 	self sendRequest: [
 		messages do: [ :each | self writeMessageNoFlush: each value tag: each key ].
-		self writeMessage: #[] tag: $S ]
+		self writeMessage: #[] tag: $S ].
+	extendedRequest := true
 ]
 
 { #category : 'input/output' }
@@ -1681,6 +1723,7 @@ P3Client >> writeQueryMessage: queryString [
 		nextPutString: queryString;
 		yourself) asBytes.
 	self sendRequest: [ self writeMessage: payload tag: $Q ].
+	extendedRequest := false.
 	self logQuery: queryString
 ]
 

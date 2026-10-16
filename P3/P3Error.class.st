@@ -82,6 +82,15 @@ P3Error class >> commitReportedAs: resultTag [
 ]
 
 { #category : 'accessing' }
+P3Error class >> copyNotSupported [
+	"COPY streams its data in messages of its own, which are neither produced nor read."
+
+	^ self new
+		info: { $C->'P3007'. $M->'COPY to or from STDIN/STDOUT is not supported' } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> noArgumentForPlaceholder: position [
 	^ self new 
 		info: { $C->'P3062'. $M->('No argument for placeholder ${1}' format: { position }) } asDictionary; 

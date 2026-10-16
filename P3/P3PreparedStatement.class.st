@@ -154,6 +154,16 @@ P3PreparedStatement >> initializeWith: aClient name: aString parameters: aParamD
 	fieldDescriptions := aRowFieldDescriptions
 ]
 
+{ #category : 'testing' }
+P3PreparedStatement >> isCopy [
+	"Is my source a COPY statement?"
+
+	| text |
+	source ifNil: [ ^ false ].
+	text := source trimLeft.
+	^ text size >= 4 and: [ (text first: 4) asUppercase = 'COPY' ]
+]
+
 { #category : 'accessing' }
 P3PreparedStatement >> name [
 	^ name
@@ -201,10 +211,13 @@ P3PreparedStatement >> runInputRows: inputRows [
 	"Execute me once per row of inputRows in a single request, and answer one P3Result per row.
 	The whole request is built before anything is written, so a row that cannot be bound leaves the
 	connection as it was instead of executing the rows before it. Nothing shared is touched until the
-	client runs the request under its monitor."
+	client runs the request under its monitor.
+	A COPY waits for its data after the first Execute, and the server ends the session when a second
+	Bind arrives instead, so a COPY is refused as a batch before anything is sent."
 
 	| messages |
 	client ifNil: [ ^ (P3Error statementClosed: name) signal ].
+	(inputRows size > 1 and: [ self isCopy ]) ifTrue: [ ^ P3Error copyNotSupported signal ].
 	messages := Array streamContents: [ :out |
 		inputRows do: [ :each |
 			out

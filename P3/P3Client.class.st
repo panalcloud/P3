@@ -892,7 +892,7 @@ P3Client >> retryDelay: seconds [
 	"Set the delay after which a reconnection will be tried on a failed connection, the default being 5 seconds.
 	See also #retryCount:"
 	
-	settings at: #retryDelay put: 5
+	settings at: #retryDelay put: seconds
 ]
 
 { #category : 'protocol' }

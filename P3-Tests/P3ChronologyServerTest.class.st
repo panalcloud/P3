@@ -8,6 +8,11 @@ Class {
 	#package : 'P3-Tests'
 }
 
+{ #category : 'accessing' }
+P3ChronologyServerTest >> expectedFailures [
+	^ #( #testTimestampsWithoutZoneAreTheInstantTheServerMeansAroundChangesOfOffset )
+]
+
 { #category : 'private' }
 P3ChronologyServerTest >> readOf: aSelectSql [
 	^ (client query: aSelectSql) firstFieldOfFirstRecord
@@ -228,6 +233,24 @@ P3ChronologyServerTest >> testTimestampsBeforeCommonEraAreTheSameInstantAsOnTheS
 		self
 			assert: (self readOf: 'SELECT make_timestamp(' , args , ', 15, 30, 45.5)') - parsed
 			equals: Duration zero ]
+]
+
+{ #category : 'tests' }
+P3ChronologyServerTest >> testTimestampsWithoutZoneAreTheInstantTheServerMeansAroundChangesOfOffset [
+	"Every quarter of an hour of the days on which the offset of the session zone changes, also in the
+	hour that does not exist and in the hour that exists twice. The fields are kept, and the instant is
+	the one the server gives the same timestamp in the session zone."
+
+	#( #( 'Europe/Brussels' '2024-03-31' '2024-10-27' ) #( 'America/Mexico_City' '2022-04-03' '2022-10-30' ) ) do: [ :each |
+		client execute: 'SET timezone = ''' , each first , ''''.
+		each allButFirst do: [ :day | | rows |
+			rows := (client query: 'SELECT d + make_interval(mins => m), extract(epoch FROM (d + make_interval(mins => m)) AT TIME ZONE current_setting(''TimeZone''))::bigint, m FROM (SELECT ''' , day , '''::timestamp AS d) AS t, generate_series(0, 1425, 15) AS m ORDER BY m') data.
+			rows do: [ :row | | timestamp |
+				timestamp := row first.
+				self assert: timestamp hour * 60 + timestamp minute equals: row third.
+				self
+					assert: (timestamp - self unixEpoch) asSeconds = row second
+					description: [ each first , ' ' , timestamp printString , ' is not the instant the server means' ] ] ] ]
 ]
 
 { #category : 'tests' }

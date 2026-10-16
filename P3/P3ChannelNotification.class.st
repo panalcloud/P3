@@ -1,9 +1,11 @@
 "
 I am one NOTIFY delivered to a P3Client that issued LISTEN.
 
-I carry the channel I was sent on, the payload the notifier passed, and the process id of the backend that sent it. P3Client collects me in #notifications while reading a response, because the server delivers me once and would otherwise be lost.
+I carry the channel I was sent on, the payload the notifier passed (empty when it passed none), the process id of the backend that sent it, and the time I was read (#receivedAt). P3Client keeps me in its queue while reading a response, because the server delivers me once and would otherwise be lost. See P3Client>>#takeNotifications and P3Client>>#waitForNotification:.
 
-I am read from a NotificationResponse message: Int32 process id, then the channel and the payload as strings.
+I am read from a NotificationResponse message: Int32 process id, then the channel and the payload as strings in the connection encoding.
+
+I am not a P3Notification, which is a server notice (NoticeResponse) signalled as an Exception.
 "
 Class {
 	#name : 'P3ChannelNotification',
@@ -11,7 +13,8 @@ Class {
 	#instVars : [
 		'processId',
 		'channel',
-		'payload'
+		'payload',
+		'receivedAt'
 	],
 	#category : 'P3-Support',
 	#package : 'P3',
@@ -51,9 +54,17 @@ P3ChannelNotification >> processId [
 	^ processId
 ]
 
+{ #category : 'accessing' }
+P3ChannelNotification >> receivedAt [
+	"When P3Client read me from the connection."
+
+	^ receivedAt
+]
+
 { #category : 'initialization' }
 P3ChannelNotification >> setProcessId: anInteger channel: channelString payload: payloadString [
 	processId := anInteger.
 	channel := channelString.
-	payload := payloadString
+	payload := payloadString.
+	receivedAt := DateAndTime now
 ]

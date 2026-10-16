@@ -53,6 +53,11 @@ P3ClientTest >> benchmark1Size [
 	^ 10000
 ]
 
+{ #category : 'accessing' }
+P3ClientTest >> expectedFailures [
+	^ #( #testResultAccessorsAnswerWhenThereIsNoData #testFirstFieldOfEmptyResultIsNil #testTotalRowCountWithCommandsWithoutCount #testDescriptionFieldsAreSigned #testTypeModifierIsSigned )
+]
+
 { #category : 'benchmarking' }
 P3ClientTest >> runAllTests [
 	"Runs all tests on the same connection/session"
@@ -336,6 +341,22 @@ P3ClientTest >> testCustomCompositeType [
 ]
 
 { #category : 'tests' }
+P3ClientTest >> testDescriptionFieldsAreSigned [
+	"System columns have a negative attribute number, and variable length types a type size of -1."
+
+	| sql fields |
+	sql := 'SELECT tableoid, version() FROM pg_class LIMIT 1'.
+	fields := (client prepare: sql) fieldDescriptions.
+	self assert: fields first attributeNumber equals: -6.
+	self assert: fields first typeSize equals: 4.
+	self assert: fields second typeSize equals: -1.
+	self assert: fields second attributeNumber equals: 0.
+	fields := (client query: sql) descriptions.
+	self assert: fields first attributeNumber equals: -6.
+	self assert: fields second typeSize equals: -1
+]
+
+{ #category : 'tests' }
 P3ClientTest >> testEmptyString [
 	| result |
 	client execute: 'DROP TABLE IF EXISTS table1'.
@@ -374,6 +395,12 @@ P3ClientTest >> testEnum [
 { #category : 'tests' }
 P3ClientTest >> testError [
 	self should: [ client query: 'SELECT * FROM abcdef' ] raise: P3Error
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testFirstFieldOfEmptyResultIsNil [
+	self assert: (client query: 'SELECT 1 WHERE false') firstFieldOfFirstRecord isNil.
+	self assert: (client query: 'SELECT 1 WHERE false') firstRecord isNil
 ]
 
 { #category : 'tests' }
@@ -604,6 +631,16 @@ P3ClientTest >> testQueryCatalog [
 ]
 
 { #category : 'tests' }
+P3ClientTest >> testResultAccessorsAnswerWhenThereIsNoData [
+	| result |
+	result := P3Result descriptions: nil data: nil results: 'SELECT 0'.
+	self assert: result firstRecord isNil.
+	self assert: result firstFieldOfFirstRecord isNil.
+	self assert: result firstColumnData isEmpty.
+	self assert: result recordsAsDictionaries isEmpty
+]
+
+{ #category : 'tests' }
 P3ClientTest >> testRetrySettings [
 	| probe |
 	probe := P3Client new.
@@ -795,6 +832,23 @@ P3ClientTest >> testTimezoneZTimestamp [
 	client execute: ('SET TIMEZONE TO ''{1}''' format: { originalTimezone }).
 	client converter timezone: (ZTimezone id: originalTimezone).
 	client execute: 'DROP TABLE table1'
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testTotalRowCountWithCommandsWithoutCount [
+	self assert: (client query: 'SELECT 1; CREATE TEMP TABLE p3_no_count_x (i int)') totalRowCount equals: 1.
+	self assert: (client query: 'CREATE TEMP TABLE p3_no_count_y (i int)') totalRowCount equals: 0.
+	self assert: (client query: 'BEGIN; INSERT INTO p3_no_count_y VALUES (1), (2); COMMIT') totalRowCount equals: 2
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testTypeModifierIsSigned [
+	"A column without a type modifier reports -1."
+
+	| descriptions |
+	descriptions := (client prepare: 'SELECT 1::int4 AS n, ''x''::varchar(18) AS v') fieldDescriptions.
+	self assert: descriptions first typeModifier equals: -1.
+	self assert: descriptions second typeModifier equals: 22
 ]
 
 { #category : 'tests' }

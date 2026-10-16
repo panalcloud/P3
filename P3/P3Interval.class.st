@@ -29,36 +29,63 @@ Class {
 P3Interval class >> readDesignator: stream [
 	self skipSeparators: stream.
 	^ String streamContents: [ :out |
-		[ stream atEnd not and: [ stream peek isLetter or: [ stream peek = $: ] ] ] 
-			whileTrue: [ out nextPut: stream next ] ]
+		[ stream atEnd not and: [ stream peek isLetter ] ] whileTrue: [ out nextPut: stream next ] ]
+]
+
+{ #category : 'private' }
+P3Interval class >> readDigits: stream [
+	^ String streamContents: [ :out |
+		[ stream atEnd not and: [ stream peek isDigit ] ] whileTrue: [ out nextPut: stream next ] ]
 ]
 
 { #category : 'instance creation' }
 P3Interval class >> readFrom: stream [
-	| years months days hours minutes seconds number word helper count |
+	"Read the 'postgres' IntervalStyle text, for example '-1 years -2 mons +3 days -04:05:06.789'.
+	Each date field has its own sign. A sign before the time part applies to hours, minutes and seconds together."
+
+	| years months days hours minutes seconds sign number word |
 	years := months := days := hours := minutes := seconds := 0.
-	helper := [ :value :designator |
-		(designator beginsWith: 'year') ifTrue: [ years := value ].
-		(designator beginsWith: 'mon') ifTrue: [ months := value ].
-		(designator beginsWith: 'day') ifTrue: [ days := value ] ].
-	count := number := 0.
-	[ count <= 3 ] whileTrue: [
-		self skipSeparators: stream.
-		number := stream atEnd ifTrue: [ nil ] ifFalse: [ Number readFrom: stream ].
-		word := self readDesignator: stream.
-		word = ':' 
-			ifTrue: [ count := 4 ]
-			ifFalse: [ 
-				helper value: number value: word.
-		 		count := count + 1 ] ].
-	stream atEnd 
-		ifFalse: [ 
-			hours := number.
-			stream peekFor: $:.
-			minutes := Number readFrom: stream.
-			stream peekFor: $:.
-			seconds := Number readFrom: stream ].
+	[ self skipSeparators: stream. stream atEnd ] whileFalse: [
+		sign := self readSign: stream.
+		number := self readNumber: stream.
+		(stream peekFor: $:)
+			ifTrue: [
+				hours := sign * number.
+				minutes := sign * (self readNumber: stream).
+				(stream peekFor: $:) ifTrue: [ seconds := sign * (self readNumber: stream) ] ]
+			ifFalse: [
+				word := self readDesignator: stream.
+				(word beginsWith: 'year')
+					ifTrue: [ years := sign * number ]
+					ifFalse: [
+						(word beginsWith: 'mon')
+							ifTrue: [ months := sign * number ]
+							ifFalse: [
+								(word beginsWith: 'day')
+									ifTrue: [ days := sign * number ]
+									ifFalse: [ ^ (P3Error parsingFailed: 'interval unit ' , word printString) signal ] ] ] ] ].
 	^ self years: years months: months days: days hours: hours minutes: minutes seconds: seconds
+]
+
+{ #category : 'private' }
+P3Interval class >> readNumber: stream [
+	"Answer an unsigned Integer, or a Float when there is a fraction. A missing number is an error."
+
+	| whole fraction |
+	whole := self readDigits: stream.
+	whole isEmpty ifTrue: [ ^ (P3Error parsingFailed: 'interval number expected') signal ].
+	(stream peekFor: $.) ifFalse: [ ^ whole asInteger ].
+	fraction := self readDigits: stream.
+	^ ((whole , fraction) asInteger / (10 raisedTo: fraction size)) asFloat
+]
+
+{ #category : 'private' }
+P3Interval class >> readSign: stream [
+	"Answer -1 for a minus, 1 for a plus or no sign."
+
+	(stream atEnd not and: [ stream peek = $- ]) ifTrue: [ stream next. ^ -1 ].
+	(stream atEnd not and: [ stream peek = $+ ]) ifTrue: [ stream next ].
+	^ 1
 ]
 
 { #category : 'private' }
@@ -178,6 +205,8 @@ P3Interval >> printIso8601On: stream [
 
 { #category : 'printing' }
 P3Interval >> printOn: stream [
+	"Print in the 'postgres' IntervalStyle. The time part has one sign, see the class comment."
+
 	| space |
 	space := false.
 	years = 0 ifFalse: [ 
@@ -195,12 +224,29 @@ P3Interval >> printOn: stream [
 		stream nextPutAll: (days = 1 ifTrue: [ 'day' ] ifFalse: [ 'days' ]).
 		space := true ].
 	space ifTrue: [ stream space ].
-	hours printOn: stream base: 10 length: 2 padded: true.
-	stream nextPut: $:.
-	minutes printOn: stream base: 10 length: 2 padded: true.
-	stream nextPut: $:.
-	seconds < 10 ifTrue: [ stream print: 0 ].
-	seconds printOn: stream
+	self printTimePartOn: stream
+]
+
+{ #category : 'printing' }
+P3Interval >> printTimePartOn: stream [
+	"hh:mm:ss.ffffff with one sign. The fields are added up first, so mixed signs keep their value:
+	1 hour and -30 minutes is written as 00:30:00. Seconds keep at most 6 decimals, the server resolution."
+
+	| microseconds fraction |
+	microseconds := (hours * 3600 + (minutes * 60)) * 1000000 + (seconds * 1000000) rounded.
+	microseconds < 0 ifTrue: [ stream nextPut: $- ].
+	microseconds := microseconds abs.
+	stream
+		nextPutAll: ((microseconds // 3600000000) printString padLeftTo: 2 with: $0);
+		nextPut: $:;
+		nextPutAll: ((microseconds \\ 3600000000 // 60000000) printString padLeftTo: 2 with: $0);
+		nextPut: $:;
+		nextPutAll: ((microseconds \\ 60000000 // 1000000) printString padLeftTo: 2 with: $0).
+	fraction := microseconds \\ 1000000.
+	fraction = 0 ifTrue: [ ^ self ].
+	stream
+		nextPut: $.;
+		nextPutAll: ((fraction printString padLeftTo: 6 with: $0) trimRight: [ :each | each = $0 ])
 ]
 
 { #category : 'accessing' }

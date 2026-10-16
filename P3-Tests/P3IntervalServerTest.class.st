@@ -20,11 +20,6 @@ P3IntervalServerTest >> assertMeaning: actual equals: expected description: aStr
 		description: aString , ': got ' , actual printString , ', wanted ' , expected printString
 ]
 
-{ #category : 'accessing' }
-P3IntervalServerTest >> expectedFailures [
-	^ #( #testBoundIntervalEqualsOneTheServerBuilds #testIntervalInsideArithmeticIsReadWithTheSameMeaning #testIntervalRoundTripKeepsItsMeaning #testNegatedIntervalIsReadWithTheNegatedMeaning #testNegativeIntervalReachesServer #testServerBuiltIntervalIsReadWithTheSameMeaning )
-]
-
 { #category : 'fixtures' }
 P3IntervalServerTest >> fixedFields [
 	"Years, months, days, hours, minutes and seconds. The time part has one sign."

@@ -20,11 +20,6 @@ P3IntervalTest >> assertRead: aString fields: expectedFields [
 		description: aString printString , ' was read as ' , actual printString , ' and not as ' , expectedFields printString
 ]
 
-{ #category : 'accessing' }
-P3IntervalTest >> expectedFailures [
-	^ #( #testPrintMixedSignTimePartKeepsItsValue #testPrintNegativeDateParts #testPrintNegativeTimePartHasOneSign #testPrintNeverDoublesASign #testPrintedIntervalReadsBackEqual #testReadAllNegative #testReadExplicitPlusSign #testReadNegativeTimePartCarriesSignToAllFields #testReadNegativeTimePartWithZeroHours )
-]
-
 { #category : 'tests-printing' }
 P3IntervalTest >> testPrintMixedSignTimePartKeepsItsValue [
 	"The time part is written with one sign, so mixed signs are first added up: 1 hour and -30 minutes is 30 minutes."

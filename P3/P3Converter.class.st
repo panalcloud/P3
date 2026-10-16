@@ -381,6 +381,10 @@ P3Converter >> convertPolygonFrom: bytes length: length description: description
 
 { #category : 'converting' }
 P3Converter >> convertScaledDecimalFrom: bytes length: length description: description [
+	"The plain form is read by #plainScaledDecimalFrom:length:, anything else by #scaledDecimalFrom:"
+
+	bytes class == ReadStream
+		ifTrue: [ (self plainScaledDecimalFrom: bytes length: length) ifNotNil: [ :number | ^ number ] ].
 	^ self scaledDecimalFrom: (self asciiStreamFor: bytes length: length) upToEnd
 ]
 
@@ -738,6 +742,44 @@ P3Converter >> plainDateFrom: bytes length: length [
 	date := [ Date year: year month: month day: day ] on: DateError do: [ :error | ^ nil ].
 	bytes skip: length.
 	^ date
+]
+
+{ #category : 'converting' }
+P3Converter >> plainScaledDecimalFrom: bytes length: length [
+	"Answer the numeric written in the next length bytes of bytes, a ReadStream on a ByteArray, as
+	digits with an optional minus sign and an optional fraction, and move past them. It is a
+	ScaledDecimal with as many decimals as the fraction has digits, as ScaledDecimal class>>#readFrom:
+	makes it. Answer nil and leave bytes where it was for any other text, which #scaledDecimalFrom:
+	reads: NaN, Infinity and -Infinity."
+
+	| buffer index end negative mantissa point scale number |
+	length = 0 ifTrue: [ ^ nil ].
+	buffer := bytes originalContents.
+	index := bytes position + 1.
+	end := bytes position + length.
+	negative := (buffer at: index) = 45 "$-".
+	negative ifTrue: [ index := index + 1 ].
+	mantissa := 0.
+	index to: end do: [ :each | | byte digit |
+		byte := buffer at: each.
+		(byte = 46 "$." and: [ point isNil ])
+			ifTrue: [ point := each ]
+			ifFalse: [
+				digit := byte - 48 "$0".
+				(digit >= 0 and: [ digit <= 9 ]) ifFalse: [ ^ nil ].
+				mantissa := mantissa * 10 + digit ] ].
+	"At least one digit, and digits on both sides of a decimal point"
+	point
+		ifNil: [
+			index > end ifTrue: [ ^ nil ].
+			scale := 0 ]
+		ifNotNil: [
+			(point > index and: [ point < end ]) ifFalse: [ ^ nil ].
+			scale := end - point ].
+	negative ifTrue: [ mantissa := mantissa negated ].
+	number := ScaledDecimal newFromNumber: mantissa / (10 raisedTo: scale) scale: scale.
+	bytes skip: length.
+	^ number
 ]
 
 { #category : 'converting' }

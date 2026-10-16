@@ -13,6 +13,11 @@ P3PreparedStatementNameTest >> byteSizeOf: aString [
 	^ (ZnCharacterEncoder utf8 encodeString: aString) size
 ]
 
+{ #category : 'accessing' }
+P3PreparedStatementNameTest >> expectedFailures [
+	^ #( #testQueryPreparedBeforeAReplacementIsPreparedAgainByPrepare )
+]
+
 { #category : 'helpers' }
 P3PreparedStatementNameTest >> nonAsciiQuery: suffix [
 	"A query of 50 characters that is more than 63 bytes long once encoded, and that differs from
@@ -111,6 +116,20 @@ P3PreparedStatementNameTest >> testPreparingTheSameQueryTwiceAnswersTheSameState
 	self assert: second == first.
 	self assert: (second query: #(1)) firstFieldOfFirstRecord equals: 2.
 	first close
+]
+
+{ #category : 'tests' }
+P3PreparedStatementNameTest >> testQueryPreparedBeforeAReplacementIsPreparedAgainByPrepare [
+	"After a new session, #prepare: of the same query answers the statement the caller already holds, prepared
+	again, so there is one statement object per name and both holders keep working."
+
+	| first second |
+	first := client prepare: 'SELECT 1'.
+	[ client query: 'SELECT pg_terminate_backend(pg_backend_pid())' ] on: P3Error do: [ :e | e return ].
+	second := client prepare: 'SELECT 1'.
+	self assert: second == first.
+	self assert: (second query: #()) firstFieldOfFirstRecord equals: 1.
+	self assert: (first query: #()) firstFieldOfFirstRecord equals: 1
 ]
 
 { #category : 'tests' }

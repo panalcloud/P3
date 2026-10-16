@@ -22,11 +22,6 @@ P3FatalErrorTest >> assertTerminationReported: aBlock [
 	^ error
 ]
 
-{ #category : 'accessing' }
-P3FatalErrorTest >> expectedFailures [
-	^ #( #testClientReconnectsAfterFatalErrorOutsideATransaction #testFatalErrorInsideATransactionLosesIt #testFatalErrorIsSeenByTheErrorLog #testSeverityDecidesWhichErrorEndsTheSession #testTerminatedBackendIsReportedByItsError #testTerminatedBackendIsReportedInAPreparedStatement )
-]
-
 { #category : 'private' }
 P3FatalErrorTest >> terminateSql [
 	^ 'SELECT pg_terminate_backend(pg_backend_pid())'

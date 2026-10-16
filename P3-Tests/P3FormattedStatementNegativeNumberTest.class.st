@@ -24,9 +24,12 @@ P3FormattedStatementNegativeNumberTest >> boundSqlFor: aValue [
 	^ (client format: 'SELECT 0-$1') bind: { aValue }
 ]
 
-{ #category : 'accessing' }
-P3FormattedStatementNegativeNumberTest >> expectedFailures [
-	^ #( #testLargeNegativeIntegerDoesNotStartComment #testNegativeExponentFloatDoesNotStartComment #testNegativeFloatAndDecimalSubtractionReadBack #testNegativeFloatDoesNotStartComment #testNegativeNumberAfterOperatorCharacterIsNotMergedIntoOperator #testNegativeNumberDoesNotDropTrailingFilter #testNegativeNumberStillMatchesTrailingFilter #testNegativeScaledDecimalDoesNotStartComment #testNegativeZeroFloatDoesNotStartComment #testSmallNegativeIntegerDoesNotStartComment #testSubtractingNegativeIntegerReadsBack )
+{ #category : 'tests-server' }
+P3FormattedStatementNegativeNumberTest >> testFractionIsNotAnIntegerDivision [
+	"1/3 printed as (1/3) is an integer division, which is 0 at the server."
+
+	self assert: (self valueOf: 'SELECT round($1 * 3)::int' with: { 1/3 }) equals: 1.
+	self assert: (self valueOf: 'SELECT round(0-$1 * 3)::int' with: { -1/3 }) equals: 1
 ]
 
 { #category : 'tests-literal' }
@@ -50,6 +53,11 @@ P3FormattedStatementNegativeNumberTest >> testNegativeFloatAndDecimalSubtraction
 { #category : 'tests-literal' }
 P3FormattedStatementNegativeNumberTest >> testNegativeFloatDoesNotStartComment [
 	self assertNoLineCommentIn: -2.5
+]
+
+{ #category : 'tests-literal' }
+P3FormattedStatementNegativeNumberTest >> testNegativeFractionDoesNotStartComment [
+	self assertNoLineCommentIn: -1/3
 ]
 
 { #category : 'tests-literal' }

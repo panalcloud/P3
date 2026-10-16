@@ -290,11 +290,35 @@ P3FormattedStatement >> printNullOn: stream [
 	stream nextPutAll: 'NULL'
 ]
 
+{ #category : 'printing' }
+P3FormattedStatement >> printNumber: number on: stream [
+	"A negative number is written in parentheses, so a preceding minus sign cannot make a -- comment
+	and a preceding operator character cannot join with the sign.
+	A fraction is a division of two numerics, since an integer division would round it.
+	A negative zero is a float8 text, because a numeric literal has no negative zero."
+
+	number isInteger ifTrue: [ ^ self printSigned: number printString on: stream ].
+	number isFraction ifTrue: [
+		stream nextPut: $(.
+		self printSigned: number numerator printString on: stream.
+		stream nextPutAll: '::numeric/'.
+		self printSigned: number denominator printString on: stream.
+		^ stream nextPutAll: '::numeric)' ].
+	number isFloat ifTrue: [
+		number isNaN ifTrue: [ ^ stream nextPutAll: '''NaN''::float8' ].
+		number isInfinite ifTrue: [
+			^ stream nextPutAll: (number > 0 ifTrue: [ '''Infinity''::float8' ] ifFalse: [ '''-Infinity''::float8' ]) ].
+		(number isZero and: [ number printString first = $- ]) ifTrue: [ ^ stream nextPutAll: '''-0''::float8' ] ].
+	^ self printSigned: number printString on: stream
+]
+
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printObject: object on: stream [
-	"In general, just use the standard print string representation"
-	
-	object printOn: stream 
+	"Numbers have their own SQL text, see #printNumber:on:.
+	Any other object uses the standard print string representation"
+
+	object isNumber ifTrue: [ ^ self printNumber: object on: stream ].
+	object printOn: stream
 ]
 
 { #category : 'printing' }
@@ -306,10 +330,22 @@ P3FormattedStatement >> printOn: stream [
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printScaledDecimal: scaledDecimal on: stream [
 	"For ScaledDecimals, use a regular floating point like representation"
-	
-	scaledDecimal 
-		printOn: stream 
-		showingDecimalPlaces: scaledDecimal scale
+
+	self
+		printSigned: (String streamContents: [ :text |
+			scaledDecimal
+				printOn: text
+				showingDecimalPlaces: scaledDecimal scale ])
+		on: stream
+]
+
+{ #category : 'private' }
+P3FormattedStatement >> printSigned: numberText on: stream [
+	"Write numberText, in parentheses when it starts with a minus sign."
+
+	(numberText notEmpty and: [ numberText first = $- ])
+		ifTrue: [ stream nextPut: $(; nextPutAll: numberText; nextPut: $) ]
+		ifFalse: [ stream nextPutAll: numberText ]
 ]
 
 { #category : 'printing-dispatched' }

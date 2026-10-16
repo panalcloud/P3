@@ -128,7 +128,7 @@ P3ConversionFailureTest >> testConnectionAnswersItsOwnQueriesAfterFailureInPrepa
 { #category : 'tests' }
 P3ConversionFailureTest >> testConnectionAnswersItsOwnQueriesAfterFailureOnMultipleRows [
 	"Failing on the first of several rows leaves DataRow messages in the stream. The next query
-	reads one of them with no row description at all, so it fails inside processDataRowUsing:
+	reads one of them with no row description at all, so readDataRows: refuses it as out of step
 	instead of answering something wrong."
 
 	self

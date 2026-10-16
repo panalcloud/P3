@@ -33,6 +33,7 @@ P3TypeMap class >> newStandard [
 	#(
 			16 #(bool #convertBooleanFrom:length:description:) 
 			17 #(bytea #convertByteArrayFrom:length:description:) 
+			18 #(#'"char"' #convertCharacterFrom:length:description:)
 			19 #(name #convertStringFrom:length:description:) 
 			20 #(int8 #convertIntegerFrom:length:description:) 
 			21 #(int2 #convertIntegerFrom:length:description:) 

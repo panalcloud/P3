@@ -8,11 +8,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3ByteaAndCharTest >> expectedFailures [
-	^ #( #testByteaReadsTheEscapeFormat #testCharTypeReadsEveryByteValue #testEscapeFormatTextWithoutAServer )
-]
-
 { #category : 'tests' }
 P3ByteaAndCharTest >> testByteaReadsTheEscapeFormat [
 	"The server writes bytea as hex or in the escape format, depending on bytea_output."

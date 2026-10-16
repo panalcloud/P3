@@ -20,11 +20,6 @@ P3NegativeNumberParsingTest >> assertInterval: anIntervalSql fields: expectedFie
 		description: anIntervalSql , ' was read as ' , actual printString , ' and not as ' , expectedFields printString
 ]
 
-{ #category : 'accessing' }
-P3NegativeNumberParsingTest >> expectedFailures [
-	^ #( #testIntervalWithExplicitPlusSign #testNegativeTimePartCarriesSignToMinutesAndSeconds #testNegativeTimePartWithZeroHours )
-]
-
 { #category : 'helpers' }
 P3NegativeNumberParsingTest >> readOf: aSelectSql [
 	"Answer the first value that the server sends for aSelectSql, converted by P3."

@@ -21,6 +21,9 @@ Class {
 		'intervalStyle',
 		'unknownTypeConverter'
 	],
+	#classVars : [
+		'HighByteSet'
+	],
 	#category : 'P3-Support',
 	#package : 'P3',
 	#tag : 'Support'
@@ -31,6 +34,13 @@ P3Converter class >> exactPowersOfTen [
 	"10 raisedTo: 0 to 22, each exactly representable as a Float"
 
 	^ #(1.0e0 1.0e1 1.0e2 1.0e3 1.0e4 1.0e5 1.0e6 1.0e7 1.0e8 1.0e9 1.0e10 1.0e11 1.0e12 1.0e13 1.0e14 1.0e15 1.0e16 1.0e17 1.0e18 1.0e19 1.0e20 1.0e21 1.0e22)
+]
+
+{ #category : 'accessing' }
+P3Converter class >> highByteSet [
+	"The set of bytes from 128 to 255, in the form of ByteString class>>#findFirstInString:inSet:startingAt:"
+
+	^ HighByteSet ifNil: [ HighByteSet := (ByteArray new: 256) from: 129 to: 256 put: 1; yourself ]
 ]
 
 { #category : 'accessing' }
@@ -368,13 +378,14 @@ P3Converter >> convertStringArrayFrom: bytes length: length description: descrip
 
 { #category : 'converting' }
 P3Converter >> convertStringFrom: bytes length: length description: description [
-	| endPosition |
+	"Read a text value. With the standard UTF-8 encoder, which the session uses from startup on,
+	#utf8StringFrom:length: reads it. That gives up on anything but plain characters of one, two and
+	three bytes, and then my encoder reads the whole value, as for any other encoding."
+
 	length = 0 ifTrue: [ ^ '' ].
-	endPosition := bytes position + length.
-	stringWriteStream reset.
-	[ stringWriteStream nextPut: (encoder nextFromStream: bytes) ]
-			doWhileTrue: [ bytes position < endPosition ].
-	^ stringWriteStream contents
+	(encoder class == ZnUTF8Encoder and: [ bytes class == ReadStream ])
+		ifTrue: [ (self utf8StringFrom: bytes length: length) ifNotNil: [ :string | ^ string ] ].
+	^ self encodedStringFrom: bytes length: length
 ]
 
 { #category : 'converting' }
@@ -462,6 +473,18 @@ P3Converter >> encodedCStringFrom: binaryStream [
 	stringWriteStream reset.
 	[ binaryStream peekFor: 0 ]
 		whileFalse: [ stringWriteStream nextPut: (encoder nextFromStream: binaryStream) ].
+	^ stringWriteStream contents
+]
+
+{ #category : 'converting' }
+P3Converter >> encodedStringFrom: bytes length: length [
+	"Read the next length bytes of bytes as text with my encoder, one character at a time"
+
+	| endPosition |
+	endPosition := bytes position + length.
+	stringWriteStream reset.
+	[ stringWriteStream nextPut: (encoder nextFromStream: bytes) ]
+		doWhileTrue: [ bytes position < endPosition ].
 	^ stringWriteStream contents
 ]
 
@@ -738,4 +761,67 @@ P3Converter >> usesPostgresIntervalStyle [
 	the server default, which is postgres."
 
 	^ intervalStyle isNil or: [ intervalStyle = 'postgres' ]
+]
+
+{ #category : 'converting' }
+P3Converter >> utf8StringFrom: bytes length: length [
+	"Decode the next length bytes of bytes, a ReadStream on a ByteArray, as UTF-8 and move past them.
+	Answer nil and leave bytes where it was when they hold anything but ASCII and valid sequences of
+	two and three bytes: a sequence of four bytes, an invalid one, or U+FEFF, which my encoder skips.
+
+	The bytes are copied into a ByteString with one primitive. The primitive scan for bytes from 128 on
+	runs on that copy, so it stops at the end of the value. Each run of ASCII is copied with one
+	primitive, and only the other sequences are decoded one by one, in place, because a character
+	never needs more room than its bytes. The result becomes a WideString at the first character
+	beyond U+00FF."
+
+	| raw string highBytes count index |
+	raw := ByteString new: length.
+	raw replaceFrom: 1 to: length with: bytes originalContents startingAt: bytes position + 1.
+	highBytes := self class highByteSet.
+	index := ByteString findFirstInString: raw inSet: highBytes startingAt: 1.
+	index = 0 ifTrue: [
+		bytes skip: length.
+		^ raw ].
+	string := raw.
+	count := index - 1.
+	[ index <= length ] whileTrue: [ | byte code |
+		byte := raw byteAt: index.
+		byte < 128
+			ifTrue: [ | last |
+				last := ByteString findFirstInString: raw inSet: highBytes startingAt: index.
+				last := last = 0 ifTrue: [ length ] ifFalse: [ last - 1 ].
+				string replaceFrom: count + 1 to: count + last - index + 1 with: raw startingAt: index.
+				count := count + last - index + 1.
+				index := last + 1 ]
+			ifFalse: [
+				(byte bitAnd: 2r11100000) = 2r11000000
+					ifTrue: [ | second |
+						index < length ifFalse: [ ^ nil ].
+						second := raw byteAt: index + 1.
+						(second bitAnd: 2r11000000) = 2r10000000 ifFalse: [ ^ nil ].
+						code := ((byte bitAnd: 2r00011111) bitShift: 6) + (second bitAnd: 2r00111111).
+						code < 128 ifTrue: [ ^ nil ].
+						index := index + 2 ]
+					ifFalse: [ | second third |
+						(byte bitAnd: 2r11110000) = 2r11100000 ifFalse: [ ^ nil ].
+						index + 2 <= length ifFalse: [ ^ nil ].
+						second := raw byteAt: index + 1.
+						third := raw byteAt: index + 2.
+						((second bitAnd: 2r11000000) = 2r10000000 and: [ (third bitAnd: 2r11000000) = 2r10000000 ])
+							ifFalse: [ ^ nil ].
+						code := (((byte bitAnd: 2r00001111) bitShift: 12) + ((second bitAnd: 2r00111111) bitShift: 6))
+							+ (third bitAnd: 2r00111111).
+						(code < 2048 or: [ (code between: 16rD800 and: 16rDFFF) or: [ code = 16rFEFF ] ])
+							ifTrue: [ ^ nil ].
+						index := index + 3 ].
+				(code > 255 and: [ string isWideString not ]) ifTrue: [
+					string := (WideString new: length)
+						replaceFrom: 1 to: count with: raw startingAt: 1;
+						yourself ].
+				string at: (count := count + 1) put: (Character value: code) ] ].
+	bytes skip: length.
+	^ count = length
+		ifTrue: [ string ]
+		ifFalse: [ string copyFrom: 1 to: count ]
 ]

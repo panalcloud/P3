@@ -15,11 +15,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3SCRAMTest >> expectedFailures [
-	^ #( #testCacheIsKeyedByPasswordSaltAndIterations #testCacheKeyDoesNotHoldAPlainHashOfThePassword #testClientNounceIsRandomPrintableText #testEachHandshakeHasItsOwnStateAndNounce #testSaltedPasswordIsCachedAcrossHandshakes )
-]
-
 { #category : 'helpers' }
 P3SCRAMTest >> handshakeWithPassword: password [
 	^ self handshakeWithPassword: password salt: 'QSXCR+Q6sek8bf92' iterations: 4096
@@ -71,13 +66,13 @@ P3SCRAMTest >> testCacheIsKeyedByPasswordSaltAndIterations [
 P3SCRAMTest >> testCacheKeyDoesNotHoldAPlainHashOfThePassword [
 	"A plain SHA-256 of the password in a long lived cache key is a password hash anyone can attack offline."
 
-	| handshake plain |
+	| key plain |
 	P3SCRAM reset.
-	handshake := self handshakeWithPassword: 'pencil'.
+	key := (self handshakeWithPassword: 'pencil') saltedPasswordKey.
 	plain := (SHA256 hashMessage: 'pencil' utf8Encoded) hex.
-	self deny: (handshake saltedPasswordKey anySatisfy: [ :each | each = plain ]).
+	self deny: (key anySatisfy: [ :each | each = plain ]).
 	P3SCRAM reset.
-	self deny: (self handshakeWithPassword: 'pencil') saltedPasswordKey equals: handshake saltedPasswordKey
+	self deny: (self handshakeWithPassword: 'pencil') saltedPasswordKey equals: key
 ]
 
 { #category : 'tests' }

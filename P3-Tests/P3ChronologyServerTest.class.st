@@ -14,6 +14,35 @@ P3ChronologyServerTest >> readOf: aSelectSql [
 ]
 
 { #category : 'tests' }
+P3ChronologyServerTest >> testChronologyValuesAreFollowedByTheNextColumn [
+	| record |
+	client execute: 'SET timezone = ''UTC'''.
+	record := (client query: 'SELECT date ''2024-02-29'', 7, timestamp ''2024-01-01 10:00:00.5'', ''x'', time ''10:00:00'', 8, timestamptz ''2024-01-01 10:00:00+00'', 9') firstRecord.
+	self
+		assert: record
+		equals: {
+			Date year: 2024 month: 2 day: 29. 7.
+			DateAndTime year: 2024 month: 1 day: 1 hour: 10 minute: 0 second: 0 nanoSecond: 500000000 offset: Duration zero. 'x'.
+			Time hour: 10 minute: 0 second: 0. 8.
+			DateAndTime year: 2024 month: 1 day: 1 hour: 10 minute: 0 second: 0 nanoSecond: 0 offset: Duration zero. 9 }
+]
+
+{ #category : 'tests' }
+P3ChronologyServerTest >> testDatesAndTimestampsAtTheLimitsOfFourDigitYears [
+	"The year has four digits up to 9999 and more after it"
+
+	client execute: 'SET timezone = ''UTC'''.
+	#( #( 1 1 1 ) #( 9999 12 31 ) #( 10000 1 1 ) #( 2024 2 29 ) #( 1900 2 28 ) ) do: [ :each | | sql |
+		sql := each first printString , ', ' , each second printString , ', ' , each third printString.
+		self
+			assert: (self readOf: 'SELECT make_date(' , sql , ')')
+			equals: (Date year: each first month: each second day: each third).
+		self
+			assert: (self readOf: 'SELECT make_timestamp(' , sql , ', 23, 59, 59)')
+			equals: (DateAndTime year: each first month: each second day: each third hour: 23 minute: 59 second: 59 nanoSecond: 0 offset: Duration zero) ]
+]
+
+{ #category : 'tests' }
 P3ChronologyServerTest >> testDatesBeforeCommonEraAreTheSameDayAsOnTheServer [
 	"make_date takes a negative year for BC: -44 is 44 BC. The image counts astronomical years, 44 BC is -43.
 	The server gives the number of days from 0001-01-01, and the image must be that many days away.
@@ -30,6 +59,24 @@ P3ChronologyServerTest >> testDatesBeforeCommonEraAreTheSameDayAsOnTheServer [
 		self
 			assert: (date - (Date year: 1 month: 1 day: 1)) days
 			equals: days ]
+]
+
+{ #category : 'tests' }
+P3ChronologyServerTest >> testFractionsOfASecondOfEveryLength [
+	"The server writes as many digits of the fraction as it needs, up to six"
+
+	client execute: 'SET timezone = ''UTC'''.
+	#( '0' '0.1' '0.12' '0.123' '0.1234' '0.12345' '0.123456' '0.000001' '0.5' ) do: [ :seconds | | nanoSeconds |
+		nanoSeconds := (seconds asNumber * 1000000000) rounded.
+		self
+			assert: (self readOf: 'SELECT make_timestamp(2020, 1, 2, 3, 4, ' , seconds , ')') nanoSecond
+			equals: nanoSeconds.
+		self
+			assert: (self readOf: 'SELECT make_timestamptz(2020, 1, 2, 3, 4, ' , seconds , ', ''UTC'')') nanoSecond
+			equals: nanoSeconds.
+		self
+			assert: (self readOf: 'SELECT make_time(3, 4, ' , seconds , ')') nanoSecond
+			equals: nanoSeconds ]
 ]
 
 { #category : 'tests' }
@@ -181,6 +228,25 @@ P3ChronologyServerTest >> testTimestampsBeforeCommonEraAreTheSameInstantAsOnTheS
 		self
 			assert: (self readOf: 'SELECT make_timestamp(' , args , ', 15, 30, 45.5)') - parsed
 			equals: Duration zero ]
+]
+
+{ #category : 'tests' }
+P3ChronologyServerTest >> testTimestampsWithoutZoneTakeTheOffsetOfTheSessionZone [
+	"A timestamp without a zone keeps its fields and gets the offset of the session zone, in standard
+	and in daylight saving time. Both values are far from a change of offset."
+
+	| winter summer |
+	client execute: 'SET timezone = ''Europe/Brussels'''.
+	winter := self readOf: 'SELECT make_timestamp(2024, 1, 15, 12, 0, 0)'.
+	summer := self readOf: 'SELECT make_timestamp(2024, 7, 15, 12, 0, 0.123456)'.
+	self
+		assert: winter
+		equals: (DateAndTime year: 2024 month: 1 day: 15 hour: 12 minute: 0 second: 0 nanoSecond: 0 offset: 1 hour).
+	self assert: winter offset asSeconds equals: 3600.
+	self
+		assert: summer
+		equals: (DateAndTime year: 2024 month: 7 day: 15 hour: 12 minute: 0 second: 0 nanoSecond: 123456000 offset: 2 hours).
+	self assert: summer offset asSeconds equals: 7200
 ]
 
 { #category : 'tests' }

@@ -36,12 +36,13 @@ Use a login that looks as follows
 
 "
 Class {
-	#name : #BaselineOfP3,
-	#superclass : #BaselineOf,
-	#category : #BaselineOfP3
+	#name : 'BaselineOfP3',
+	#superclass : 'BaselineOf',
+	#category : 'BaselineOfP3',
+	#package : 'BaselineOfP3'
 }
 
-{ #category : #baseline }
+{ #category : 'baseline' }
 BaselineOfP3 >> baselineOf: spec [
 	<baseline>
 	spec

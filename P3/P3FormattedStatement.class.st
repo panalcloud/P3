@@ -256,7 +256,7 @@ P3FormattedStatement >> printDate: date on: stream [
 	"Use ISO 8601 YYYY-MM-DD"
 	
 	stream nextPut: $'.
-	date printOn: stream format: #(3 2 1 $- 1 1 2).
+	P3MessageBuilder printIsoDate: date on: stream.
 	stream nextPut: $'
 ]
 
@@ -265,8 +265,8 @@ P3FormattedStatement >> printDateAndTime: dateAndTime on: stream [
 	"Use ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz"
 	
 	stream nextPut: $'.
-	dateAndTime printOn: stream.
-	stream nextPut: $' 
+	P3MessageBuilder printIsoDateAndTime: dateAndTime on: stream.
+	stream nextPut: $'
 ]
 
 { #category : 'printing-dispatched' }
@@ -369,10 +369,10 @@ P3FormattedStatement >> printString: string on: stream [
 
 { #category : 'printing-dispatched' }
 P3FormattedStatement >> printTime: time on: stream [
-	"Use ISO 8601 hh:mm:ss"
+	"Use ISO 8601 hh:mm:ss.s"
 	
 	stream nextPut: $'.
-	time print24: true on: stream.
+	P3MessageBuilder printIsoTime: time on: stream.
 	stream nextPut: $'
 ]
 

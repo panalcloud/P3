@@ -20,6 +20,45 @@ P3MessageBuilder class >> newWithEncoder: anEncoder [
 	^ self new initWithEncoder: anEncoder
 ]
 
+{ #category : 'printing' }
+P3MessageBuilder class >> printIsoDate: date on: stream [
+	"ISO 8601 YYYY-MM-DD. The image counts years astronomically, with a year 0. PostgreSQL has no year 0 or
+	negative years: year 0 is 1 BC, year -1 is 2 BC, and so on."
+
+	date year > 0 ifTrue: [ ^ date printOn: stream format: #(3 2 1 $- 1 1 2) ].
+	stream
+		nextPutAll: ((1 - date year) printPaddedWith: $0 to: 4);
+		nextPut: $-;
+		nextPutAll: (date monthIndex printPaddedWith: $0 to: 2);
+		nextPut: $-;
+		nextPutAll: (date dayOfMonth printPaddedWith: $0 to: 2);
+		nextPutAll: ' BC'
+]
+
+{ #category : 'printing' }
+P3MessageBuilder class >> printIsoDateAndTime: dateAndTime on: stream [
+	"ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz. A year before 1 is written as a BC year, see #printIsoDate:on:."
+
+	| text |
+	dateAndTime year > 0 ifTrue: [ ^ dateAndTime printOn: stream ].
+	text := dateAndTime printString.
+	stream
+		nextPutAll: ((1 - dateAndTime year) printPaddedWith: $0 to: 4);
+		nextPutAll: (text copyFrom: (text indexOf: $- startingAt: 2) to: text size);
+		nextPutAll: ' BC'
+]
+
+{ #category : 'printing' }
+P3MessageBuilder class >> printIsoTime: time on: stream [
+	"ISO 8601 hh:mm:ss, followed by the fraction of the second when there is one"
+
+	time print24: true on: stream.
+	time nanoSecond > 0 ifTrue: [
+		stream
+			nextPut: $.;
+			nextPutAll: ((time nanoSecond printPaddedWith: $0 to: 9) trimRight: [ :each | each = $0 ]) ]
+]
+
 { #category : 'converting' }
 P3MessageBuilder >> asBytes [
 	^ byteStream contents
@@ -102,20 +141,16 @@ P3MessageBuilder >> printByteArray: byteArray on: stream [
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printDate: date on: stream [
-	"Use ISO 8601 YYYY-MM-DD"
-	
-	stream nextPut: $'.
-	date printOn: stream format: #(3 2 1 $- 1 1 2).
-	stream nextPut: $'
+	"Use ISO 8601 YYYY-MM-DD. A parameter is the value itself, so it has no SQL quotes."
+
+	self printUnquotedDate: date on: stream
 ]
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printDateAndTime: dateAndTime on: stream [
-	"Use ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz"
-	
-	stream nextPut: $'.
-	dateAndTime printOn: stream.
-	stream nextPut: $' 
+	"Use ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz. A parameter is the value itself, so it has no SQL quotes."
+
+	self printUnquotedDateAndTime: dateAndTime on: stream
 ]
 
 { #category : 'printing-dispatched' }
@@ -165,35 +200,33 @@ P3MessageBuilder >> printString: string on: stream [
 
 { #category : 'printing-dispatched' }
 P3MessageBuilder >> printTime: time on: stream [
-	"Use ISO 8601 hh:mm:ss"
-	
-	stream nextPut: $'.
-	time print24: true on: stream.
-	stream nextPut: $'
+	"Use ISO 8601 hh:mm:ss.s. A parameter is the value itself, so it has no SQL quotes."
+
+	self printUnquotedTime: time on: stream
 ]
 
 { #category : 'printing' }
 P3MessageBuilder >> printUnquotedDate: date on: stream [
-	"ISO 8601 YYYY-MM-DD, without the quotes that a scalar parameter carries.
+	"ISO 8601 YYYY-MM-DD, without the quotes of an SQL literal.
 	An array element is quoted with double quotes instead, see P3ArrayElementPrinter."
 
-	date printOn: stream format: #(3 2 1 $- 1 1 2)
+	self class printIsoDate: date on: stream
 ]
 
 { #category : 'printing' }
 P3MessageBuilder >> printUnquotedDateAndTime: dateAndTime on: stream [
-	"ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz, without the quotes that a scalar parameter carries.
+	"ISO 8601 YYYY-MM-DDThh:mm:ss.s+ZZ:zz, without the quotes of an SQL literal.
 	An array element is quoted with double quotes instead, see P3ArrayElementPrinter."
 
-	dateAndTime printOn: stream
+	self class printIsoDateAndTime: dateAndTime on: stream
 ]
 
 { #category : 'printing' }
 P3MessageBuilder >> printUnquotedTime: time on: stream [
-	"ISO 8601 hh:mm:ss, without the quotes that a scalar parameter carries.
+	"ISO 8601 hh:mm:ss.s, without the quotes of an SQL literal.
 	An array element is quoted with double quotes instead, see P3ArrayElementPrinter."
 
-	time print24: true on: stream
+	self class printIsoTime: time on: stream
 ]
 
 { #category : 'printing-dispatched' }

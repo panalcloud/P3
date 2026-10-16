@@ -7,7 +7,7 @@ Class {
 
 { #category : 'accessing' }
 P3PreparedStatementValueTest >> expectedFailures [
-	^ #( #testArbitraryObjectIsRefused #testCharacterIsOneCharacterText #testCharactersAndRefusedObjectsInArrays #testDateAndTimeBoundAsTextCarryNoQuotes #testFractionIsRefused #testNonFiniteFloatsReachServer #testObjectPrintingAsSqlIsNotRun #testSupportedValueTypesReachTheServerAndComeBack #testTimeKeepsFractionOfSecond )
+	^ #( #testArbitraryObjectIsRefused #testCharacterIsOneCharacterText #testCharactersAndRefusedObjectsInArrays #testFractionIsRefused #testNonFiniteFloatsReachServer #testObjectPrintingAsSqlIsNotRun #testSupportedValueTypesReachTheServerAndComeBack )
 ]
 
 { #category : 'helpers' }

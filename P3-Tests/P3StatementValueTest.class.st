@@ -85,6 +85,18 @@ P3StatementValueTest >> testDateAndTimeBoundAsTextCarryNoQuotes [
 ]
 
 { #category : 'tests-dates' }
+P3StatementValueTest >> testDatesBeforeYearOneReachTheServer [
+	"The image counts years astronomically: year 0 is 1 BC and year -43 is 44 BC."
+
+	self assert: (self valueOf: 'SELECT $1::date = ''0044-03-15 BC''::date' with: { Date year: -43 month: 3 day: 15 }) equals: true.
+	self assert: (self valueOf: 'SELECT $1::date = ''0001-12-31 BC''::date' with: { Date year: 0 month: 12 day: 31 }) equals: true.
+	self
+		assert: (self valueOf: 'SELECT $1::timestamptz = ''0044-03-15 10:30:00.5+00 BC''::timestamptz'
+			with: { DateAndTime year: -43 month: 3 day: 15 hour: 12 minute: 30 second: 0 nanoSecond: 500000000 offset: 2 hours })
+		equals: true
+]
+
+{ #category : 'tests-dates' }
 P3StatementValueTest >> testDatesRoundTrip [
 	{ Date newDay: 31 month: 1 year: 2024. Date newDay: 15 month: 3 year: 44. Date newDay: 1 month: 1 year: 1 }
 		do: [ :each |

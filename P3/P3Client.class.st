@@ -853,16 +853,15 @@ P3Client >> isSSL [
 
 { #category : 'testing' }
 P3Client >> isServerVersionAtLeastMajor: major minor: minor [
-	"Return true when the server version if at least major.minor, false otherwise"
+	"Return true when the server version if at least major.minor, false otherwise. Elements that are not
+	numbers, like the 18beta1 of a pre-release, read as their leading digits, and a missing minor as 0."
 	
-	| serverVersion |
-	serverVersion := ($. split: self serverVersion) collect: [ :each |
-		"try to be robust for non-numeric version elements"
-		Number readFrom: each ifFail: [ nil ] ].
-	^ serverVersion first > major
-			or: [ 
-				serverVersion first = major 
-					and: [ serverVersion second >= minor ] ]
+	| numbers |
+	numbers := ($. split: self serverVersion) collect: [ :each |
+		Integer readFrom: each ifFail: [ 0 ] ].
+	^ numbers first > major
+		or: [ numbers first = major
+			and: [ (numbers at: 2 ifAbsent: [ 0 ]) >= minor ] ]
 ]
 
 { #category : 'testing' }
@@ -880,7 +879,7 @@ P3Client >> isUnknownTypesAsTextEnabled [
 
 { #category : 'testing' }
 P3Client >> isUsingUnixSocket [
-	"Following the PostgreSQL convention a host starting with a / is a path to a Unix Socket"
+	"Following the PostgreSQL convention a host starting with a / is a Unix Socket directory, see #unixSocketFile"
 	
 	^ self host notNil and: [ self host first = $/ ]
 ]
@@ -1059,7 +1058,7 @@ P3Client >> newSocketStream [
 
 	| stream |
 	stream := self isUsingUnixSocket
-		ifTrue: [ ZdcSocketStream on: (ZnNetworkingUtils default unixSocketOnFile: self host asFileReference) ]
+		ifTrue: [ ZdcSocketStream on: (ZnNetworkingUtils default unixSocketOnFile: self unixSocketFile) ]
 		ifFalse: [
 			self newTcpSocketStream in: [ :tcp |
 				tcp socket setOption: 'SO_KEEPALIVE' value: true.
@@ -1778,29 +1777,32 @@ P3Client >> serverEncoding [
 	One way to set the default at the database level is with the SQL command
 	ALTER DATABASE <mydb> SET client_encoding TO 'UTF8' "
 	
-	self ensureConnected.
-	^ self converter encoder identifier
+	^ self critical: [
+		self ensureConnected.
+		self converter encoder identifier ]
 ]
 
 { #category : 'accessing' }
 P3Client >> serverTimezone [
-	"Return the name of the timezone of the current session, also when the converter cannot resolve it.
-	See #converter and P3Converter>>#sessionTimezone
+	"Return the name of the timezone used by the server for this session/connection.
+	This is determined automatically from the TimeZone property of the server.
 	One way to set the default at the database level is with the SQL command
 	ALTER DATABASE <mydb> SET timezone TO 'UTC' "
 	
-	self ensureConnected.
-	^ self converter timezoneName
+	^ self critical: [
+		self ensureConnected.
+		self converter timezoneName ]
 ]
 
 { #category : 'accessing' }
 P3Client >> serverVersion [
 	"Return the version string of the PostgreSQL server"
 	
-	self ensureConnected.
-	^ properties 
-		at: 'server_version' 
-		ifAbsent: [ (self query: 'SHOW server_version') firstFieldOfFirstRecord ]
+	^ self critical: [
+		self ensureConnected.
+		properties 
+			at: 'server_version' 
+			ifAbsent: [ (self query: 'SHOW server_version') firstFieldOfFirstRecord ] ]
 ]
 
 { #category : 'accessing' }
@@ -1966,6 +1968,18 @@ P3Client >> transactionStatus [
 	response has been read."
 
 	^ transactionStatus
+]
+
+{ #category : 'private' }
+P3Client >> unixSocketFile [
+	"Following the PostgreSQL convention a host that is a directory holds the socket file
+	.s.PGSQL.<port>. A host that is not a directory names the socket file itself."
+
+	| file |
+	file := self host asFileReference.
+	^ file isDirectory
+		ifTrue: [ file / ('.s.PGSQL.' , self port asString) ]
+		ifFalse: [ file ]
 ]
 
 { #category : 'protocol' }

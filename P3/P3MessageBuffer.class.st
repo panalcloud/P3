@@ -21,6 +21,15 @@ Class {
 }
 
 { #category : 'accessing' }
+P3MessageBuffer class >> retainedCapacity [
+	"The largest buffer I keep for the next message. A bigger one, made for a single large message like
+	a row with a big value, is replaced by a small one as soon as a message does not need it, so that one
+	large message does not pin its memory for the life of the connection."
+
+	^ 1024 * 1024
+]
+
+{ #category : 'accessing' }
 P3MessageBuffer >> capacity [
 	^ self rawByteBuffer size
 ]
@@ -33,7 +42,11 @@ P3MessageBuffer >> initialize [
 
 { #category : 'initialization' }
 P3MessageBuffer >> initializeForSize: actualSize [
-	(payload isNil or: [ actualSize > self capacity ])
+	| retained |
+	retained := self class retainedCapacity.
+	(payload isNil
+		or: [ actualSize > self capacity
+		or: [ self capacity > retained and: [ actualSize <= retained ] ] ])
 		ifTrue: [ payload := (ByteArray new: ((actualSize // 1024) + 1) * 1024) readStream ].
 	size := actualSize.
 	payload setFrom: 1 to: size

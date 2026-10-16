@@ -82,7 +82,8 @@ Class {
 		'properties',
 		'converter',
 		'message',
-		'access'
+		'access',
+		'notifications'
 	],
 	#category : 'P3-Core',
 	#package : 'P3',
@@ -402,6 +403,7 @@ P3Client >> initialize [
 	
 	settings := IdentityDictionary new.
 	properties := Dictionary new.
+	notifications := OrderedCollection new.
 	
 	self beThreadSafe
 ]
@@ -410,6 +412,14 @@ P3Client >> initialize [
 P3Client >> initializeConverter [
 	self converter initializeFrom: properties.
 	self converter timestampClass: self timestampClass
+]
+
+{ #category : 'testing' }
+P3Client >> isAsynchronousMessage [
+	"Is the message I am positioned on one the server can send between any two messages?
+	Such a message is not part of any request's response sequence."
+
+	^ 'NSA' includes: message tag
 ]
 
 { #category : 'testing' }
@@ -603,6 +613,14 @@ P3Client >> newMessageBuilder [
 	^ P3MessageBuilder newWithEncoder: self converter encoder
 ]
 
+{ #category : 'accessing' }
+P3Client >> notifications [
+	"The NOTIFYs collected while reading responses, oldest first. See #takeNotifications to consume
+	them. A connection that LISTENs and never consumes them collects them without bound."
+
+	^ self critical: [ notifications asArray ]
+]
+
 { #category : 'initialize-release' }
 P3Client >> open [
 	"Open my connection with the server (do not yet #connect)"
@@ -746,6 +764,15 @@ P3Client >> printStateOn: stream [
 ]
 
 { #category : 'private' }
+P3Client >> processAsynchronousMessage [
+	"Consume the asynchronous message I am positioned on. See #isAsynchronousMessage."
+
+	message tag = $N ifTrue: [ ^ self processNoticeResponse ].
+	message tag = $S ifTrue: [ ^ self processParameterStatus: message readStream ].
+	^ self processNotificationResponse
+]
+
+{ #category : 'private' }
 P3Client >> processBackendKeyData: payload [
 	session := payload uint32.
 	properties at: 'backend_process_id' put: session.
@@ -768,6 +795,27 @@ P3Client >> processDataRowUsing: description [
 ]
 
 { #category : 'private' }
+P3Client >> processNoticeResponse [
+	"Signal the notice as a resumable P3Notification, so a sender that cares can observe it while
+	reading continues."
+
+	self signal: P3Notification using: (self errorNoticeInfo: message readStream)
+]
+
+{ #category : 'private' }
+P3Client >> processNotificationResponse [
+	"Collect the NOTIFY I am positioned on. The server delivers it once, so discarding it would
+	lose its payload. See #notifications."
+
+	| payload |
+	payload := message readStream.
+	notifications addLast: (P3ChannelNotification
+		processId: payload uint32
+		channel: (self converter encodedCStringFrom: payload)
+		payload: (self converter encodedCStringFrom: payload))
+]
+
+{ #category : 'private' }
 P3Client >> processParameterDescription: payload [
 	| count |
 	count := payload uint16.
@@ -780,12 +828,13 @@ P3Client >> processParameterDescription: payload [
 
 { #category : 'private' }
 P3Client >> processParameterStatus: payload [
-	"Record a server parameter, and tell the converter: the session time zone decides how values without a zone are read."
+	"Record a server parameter, and tell the converter: the session time zone decides how values without a zone are read.
+	The value is text in the connection encoding, like a role name in session_authorization."
 	
 	| key value |
 	
 	key := self converter asciiCStringFrom: payload.
-	value := self converter asciiCStringFrom: payload.
+	value := self converter encodedCStringFrom: payload.
 		
 	properties at: key put: value.
 	self converter noteSessionParameter: key value: value
@@ -846,17 +895,18 @@ P3Client >> readMessageCloseAfterError [
 
 { #category : 'input/output' }
 P3Client >> readMessageOnError: block [
-	message readFrom: connection.
-	message tag = $E 
+	"Read the next message belonging to the response flow. NoticeResponse, ParameterStatus and
+	NotificationResponse can arrive between any two messages, so I consume them here and keep reading
+	under the same error policy: my senders only see the messages their own sequence expects.
+	An ErrorResponse is followed by a ReadyForQuery, which block reads."
+
+	[ message readFrom: connection.
+	  message tag = $E 
 		ifTrue: [ | info |
 			info := self errorNoticeInfo: message readStream.
 			block cull: info.
 			self signal: P3Error using: info ].
-	message tag = $N 
-		ifTrue: [ | info |
-			info := self errorNoticeInfo: message readStream.
-			self signal: P3Notification using: info.
-			^ self readMessage ].
+	  self isAsynchronousMessage ] whileTrue: [ self processAsynchronousMessage ].
 	^ message
 ]
 
@@ -973,9 +1023,7 @@ P3Client >> runQueryResult [
 						self assert: message tag = $D.
 						out nextPut: (self processDataRowUsing: result descriptions) ] ]) ].
 		result addResult: (self converter asciiCStringFrom: message readStream).
-		self readMessage tag = $S
-			ifTrue: [ self processParameterStatus: message readStream; readMessage ].
-		message tag = $Z ] whileFalse.
+		self readMessage tag = $Z ] whileFalse.
 	result source: (properties at: #sql_source ifAbsent: nil).
 	self logResult: result.
 	^ result
@@ -1003,12 +1051,9 @@ P3Client >> runStartup [
 	[
 	self readMessageCloseAfterError tag = $Z
 		ifTrue: [ ^ self ].
-	message tag = $S
-		ifTrue: [ self processParameterStatus: message readStream ]
-		ifFalse: [  
-			message tag = $K
-				ifTrue: [ self processBackendKeyData: message readStream ]
-				ifFalse: [ ^ P3Error unexpectedMessageDuringStartup signal ] ] ] repeat
+	message tag = $K
+		ifTrue: [ self processBackendKeyData: message readStream ]
+		ifFalse: [ ^ P3Error unexpectedMessageDuringStartup signal ] ] repeat
 ]
 
 { #category : 'private messages' }
@@ -1142,6 +1187,18 @@ P3Client >> startupOptions: optionsString [
 { #category : 'printing' }
 P3Client >> statePrintString [
 	^ String streamContents: [ :out | self printStateOn: out ]
+]
+
+{ #category : 'accessing' }
+P3Client >> takeNotifications [
+	"Answer the NOTIFYs collected so far and forget them, so each one is handled once. Under my monitor,
+	because a reader process adds to the same collection."
+
+	^ self critical: [
+		| collected |
+		collected := notifications asArray.
+		notifications removeAll.
+		collected ]
 ]
 
 { #category : 'accessing' }

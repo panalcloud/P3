@@ -447,6 +447,7 @@ P3Converter >> floatFrom: aString [
 { #category : 'initialize' }
 P3Converter >> initialize [
 	super initialize.
+	encoder := ZnCharacterEncoder utf8.
 	asciiReadStream := String new readStream.
 	asciiWriteStream := String new writeStream.
 	stringWriteStream := String new writeStream.

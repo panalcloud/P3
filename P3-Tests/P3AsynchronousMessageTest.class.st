@@ -27,11 +27,6 @@ P3AsynchronousMessageTest >> clients [
 	^ super clients , { notifier }
 ]
 
-{ #category : 'accessing' }
-P3AsynchronousMessageTest >> expectedFailures [
-	^ #( #testConnectionAnswersItsOwnQueriesAfterANotification #testConnectionAnswersItsOwnQueriesAfterSeveralParameterStatus #testNotificationIsKept #testQueryDeliveringANotification #testStatementReportingSeveralParameters )
-]
-
 { #category : 'private' }
 P3AsynchronousMessageTest >> listenOnClient [
 	"Make the server send NotificationResponse to my client when notifier notifies."
@@ -93,6 +88,15 @@ P3AsynchronousMessageTest >> testNotificationIsKept [
 	notification := client notifications first.
 	self assert: notification channel equals: self channelName.
 	self assert: notification payload equals: 'payload'
+]
+
+{ #category : 'tests' }
+P3AsynchronousMessageTest >> testParameterStatusIsReadInTheConnectionEncoding [
+	"search_path is reported back as ParameterStatus from PostgreSQL 18. Its value is text, not ASCII."
+
+	(client isServerVersionAtLeastMajor: 18 minor: 0) ifFalse: [ ^ self skip ].
+	client execute: 'SET search_path TO "ñandú 日本"'.
+	self assert: ((client instVarNamed: 'properties') at: 'search_path') equals: '"ñandú 日本"'
 ]
 
 { #category : 'tests' }

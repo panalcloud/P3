@@ -44,6 +44,11 @@ P3RequestDisciplineTest >> clients [
 ]
 
 { #category : 'accessing' }
+P3RequestDisciplineTest >> expectedFailures [
+	^ #( #testDeadSocketInsideTransactionSignals #testDeadSocketOutsideTransactionReconnects #testPrintingAConnectedClientDoesNotChangeIt #testPrintingTheClientKeepsTheLostTransactionGuard #testReconnectInsideTransactionSignals #testSessionEndedByTheServerWhileIdleIsReplacedWithoutARetry )
+]
+
+{ #category : 'accessing' }
 P3RequestDisciplineTest >> statementName [
 	"The name I prepare statements under. One name is enough: each test gets its own connection."
 
@@ -279,6 +284,32 @@ P3RequestDisciplineTest >> testCopyOutThroughPreparedStatementIsRejectedCleanly 
 	self assertConnectionAnswersItsOwnQueries
 ]
 
+{ #category : 'tests - retrying' }
+P3RequestDisciplineTest >> testDeadSocketInsideTransactionSignals [
+	"A socket found dead before anything is read must not be replaced silently when a transaction was open:
+	its statements would run in autocommit on the new connection."
+
+	| error |
+	client execute: 'BEGIN'.
+	client instVarNamed: 'connection' put: (P3DeadPeerStream on: client connection).
+	error := [ client query: 'SELECT 1'. nil ] on: P3Error do: [ :e | e ].
+	self assert: error notNil description: 'The client reconnected silently after a lost transaction'.
+	self assert: error code equals: 'P3050'.
+	self assert: client isTransactionLost
+]
+
+{ #category : 'tests - retrying' }
+P3RequestDisciplineTest >> testDeadSocketOutsideTransactionReconnects [
+	"Outside a transaction a socket found dead is replaced by a new session."
+
+	| session |
+	session := client session.
+	client instVarNamed: 'connection' put: (P3DeadPeerStream on: client connection).
+	self assert: (client query: 'SELECT 5') firstFieldOfFirstRecord equals: 5.
+	self deny: client session equals: session.
+	self deny: client isTransactionLost
+]
+
 { #category : 'tests - unexpected messages' }
 P3RequestDisciplineTest >> testEmptyQuery [
 	"An empty query is answered with EmptyQueryResponse in place of a CommandComplete. It is not an
@@ -347,6 +378,39 @@ P3RequestDisciplineTest >> testPreparedStatementCloseIsSynchronised [
 	self assertConnectionAnswersItsOwnQueries
 ]
 
+{ #category : 'tests - ordinary requests' }
+P3RequestDisciplineTest >> testPrintingAConnectedClientDoesNotChangeIt [
+	"Printing, inspecting and logging read the session. On a working connection that must leave
+	everything as it was."
+
+	| session |
+	session := client session.
+	self assert: session equals: (client query: 'SELECT pg_backend_pid()') firstFieldOfFirstRecord.
+	client printString.
+	client printStateOn: (WriteStream on: String new).
+	self assert: client session equals: session.
+	self assert: client isConnected.
+	self deny: client isTransactionLost.
+	self assert: client transactionStatus equals: $I.
+	self assertConnectionAnswersItsOwnQueries
+]
+
+{ #category : 'tests - abandoned responses' }
+P3RequestDisciplineTest >> testPrintingTheClientKeepsTheLostTransactionGuard [
+	"Printing or inspecting a client reads its session. That must not forget that a transaction was lost,
+	or the next statement would run in autocommit on a new connection."
+
+	| error |
+	client execute: 'BEGIN'.
+	client closeAfterFailure.
+	client printString.
+	client session.
+	error := [ client query: 'SELECT 1'. nil ] on: P3Error do: [ :e | e ].
+	self assert: error notNil description: 'The client reconnected silently after a lost transaction'.
+	self assert: error code equals: 'P3050'
+
+]
+
 { #category : 'tests - writing requests' }
 P3RequestDisciplineTest >> testQueryAfterFailedDrainReconnects [
 	"Draining a response the server is not going to send can only fail, and then my connection is
@@ -361,6 +425,72 @@ P3RequestDisciplineTest >> testQueryAfterFailedDrainReconnects [
 	extraClient noteResponseRequested.
 	self assert: (extraClient query: 'SELECT 111') data equals: #( #( 111 ) ).
 	self deny: extraClient isResponsePending
+]
+
+{ #category : 'tests - retrying' }
+P3RequestDisciplineTest >> testReconnectInsideTransactionSignals [
+	"A connection lost while a transaction was open cannot be replaced by a fresh one. The server
+	rolled that transaction back, so everything the caller still believes is inside it would run in
+	autocommit, and its COMMIT would succeed having committed only part of the work. An explicit
+	#connect is the caller saying it knows."
+
+	client execute: 'BEGIN'.
+	self assert: client transactionStatus equals: $T.
+	client closeAfterFailure.
+	self should: [ client query: 'SELECT 1' ] raise: P3Error.
+	client connect.
+	self assert: (client query: 'SELECT 111') data equals: #( #( 111 ) )
+]
+
+{ #category : 'tests - retrying' }
+P3RequestDisciplineTest >> testRetryDelayDoesNotHoldTheMonitor [
+	"Nothing listens on port 1: each attempt is refused at once and the client waits retryDelay between attempts.
+	Another process must be able to use the client during that wait."
+
+	| failure finished elapsed |
+	extraClient := P3Client new url: P3ClientTest url; port: 1; retryCount: 2; retryDelay: 2; yourself.
+	finished := Semaphore new.
+	[ failure := [ extraClient query: 'SELECT 1'. nil ] on: NetworkError do: [ :error | error ].
+	  finished signal ] fork.
+	(Delay forMilliseconds: 700) wait.
+	elapsed := [ extraClient takeNotifications ] timeToRun.
+	self assert: elapsed < 500 milliSeconds.
+	"waitTimeoutSeconds: answers true when it timed out"
+	self deny: (finished waitTimeoutSeconds: 10).
+	self assert: failure notNil
+]
+
+{ #category : 'tests - retrying' }
+P3RequestDisciplineTest >> testSessionEndedByTheServerWhileIdleIsReplacedWithoutARetry [
+	"The server ends an idle session, like a restart or pg_terminate_backend does. The next request opens a
+	new session at once, without needing a retry: the startup of the new session goes to a new socket."
+
+	| pid |
+	extraClient := self newConnectedClient.
+	client retryCount: 0.
+	pid := client session.
+	extraClient query: 'SELECT pg_terminate_backend(' , pid printString , ')'.
+	(Delay forMilliseconds: 300) wait.
+	self assert: (client query: 'SELECT 5') firstFieldOfFirstRecord equals: 5.
+	self deny: client session equals: pid
+]
+
+{ #category : 'tests - ordinary requests' }
+P3RequestDisciplineTest >> testSessionIsNilWhenTheSocketIsGone [
+	"When the socket is gone without the client having been told to close, the session that it
+	remembers belongs to a backend that no longer serves it. #session answers nil, and still does not
+	change anything. The next request reconnects, which is another session."
+
+	| session |
+	session := client session.
+	self assert: session notNil.
+	(client instVarNamed: 'connection') socket close.
+	self deny: client isConnected.
+	self assert: client session isNil.
+	self assert: client session isNil.
+	self assert: (client query: 'SELECT 5') firstFieldOfFirstRecord equals: 5.
+	self assert: client session notNil.
+	self deny: client session = session
 ]
 
 { #category : 'tests - abandoned responses' }

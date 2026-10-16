@@ -22,6 +22,13 @@ I also support SSL connections. Use #connectSSL to initiate such a connection.
 I represent a single database connection or session, I am not thread safe.
 
 
+Asynchronous notifications (LISTEN/NOTIFY)
+
+#listen: subscribes my session to a channel and #notify:payload: sends on one. I read the NOTIFYs the server sends at any point of any response, or while idle, and queue them as P3ChannelNotification, bounded by #notificationLimit. #takeNotifications takes them without blocking, #waitForNotification: waits for the next one without sending anything, and #notificationHandler: receives them after each request instead. A lost connection is replaced with the same subscriptions, see #restoreListening:. A wait in progress when the connection is lost fails with a P3Error.
+
+As seen through me, PostgreSQL delivers a NOTIFY sent inside a transaction at commit and not at all on rollback, delivers identical channel and payload pairs of one transaction once, delivers transactions in commit order, and delivers a session's own notifications to it.
+
+
 Examples 
 
 Here is the simplest test that does an actual query, it should return true.
@@ -91,7 +98,10 @@ Class {
 		'extendedRequest',
 		'transactionLost',
 		'connectionGeneration',
-		'connectionLost'
+		'connectionLost',
+		'listeningChannels',
+		'droppedNotificationCount',
+		'notificationHandler'
 	],
 	#classInstVars : [
 		'unknownTypesAsTextByDefault'
@@ -310,6 +320,26 @@ P3Client >> cancelRequestMessage [
 		out nextPutAll: #[ 0 0 0 16 4 210 22 46 ].
 		out nextPutAll: ((properties at: 'backend_process_id') asByteArrayOfSize: 4).
 		out nextPutAll: ((properties at: 'backend_secret_key') asByteArrayOfSize: 4) ]
+]
+
+{ #category : 'private' }
+P3Client >> checkChannelName: channelName [
+	"Refuse a name the server would refuse or truncate, see #listen:."
+
+	| size |
+	channelName isEmptyOrNil ifTrue: [
+		^ (P3Error invalidChannelName: channelName reason: 'it is empty') signal ].
+	size := self converter encoder encodedByteCountForString: channelName.
+	size > 63 ifTrue: [
+		^ (P3Error invalidChannelName: channelName reason: ('it takes {1} bytes, at most 63 are kept' format: { size })) signal ]
+]
+
+{ #category : 'private' }
+P3Client >> checkOutsideTransaction [
+	"Refuse LISTEN and UNLISTEN inside a transaction, see #listen:."
+
+	(transactionStatus ifNil: [ $I ]) = $I
+		ifFalse: [ P3Error listenInsideTransaction signal ]
 ]
 
 { #category : 'private' }
@@ -787,6 +817,13 @@ P3Client >> handleAuthenticationSSPI [
 	(P3Error unsupportedAuthenticationType: #SSPI) signal
 ]
 
+{ #category : 'notifications' }
+P3Client >> hasNotifications [
+	"Are notifications queued that were not taken yet? This does not read from the connection."
+
+	^ self critical: [ notifications notEmpty ]
+]
+
 { #category : 'accessing' }
 P3Client >> host [
 	"Return the host name I (want to) connect to.
@@ -810,6 +847,8 @@ P3Client >> initialize [
 	settings := IdentityDictionary new.
 	properties := Dictionary new.
 	notifications := OrderedCollection new.
+	listeningChannels := Set new.
+	droppedNotificationCount := 0.
 	pendingResponses := 0.
 	partialWrite := false.
 	extendedRequest := false.
@@ -966,6 +1005,33 @@ P3Client >> listTablesInSchema: schemaName [
 	^ (statement query: { schemaName } ) data
 ]
 
+{ #category : 'notifications' }
+P3Client >> listen: channelName [
+	"Subscribe my session to channelName, so NOTIFYs sent on it reach me, see #waitForNotification: and
+	#takeNotifications. The name is sent as a quoted identifier: case, spaces and quotes are part of it.
+	It must not be empty nor longer than 63 bytes in the connection encoding, which the server would
+	truncate here while pg_notify refuses it.
+
+	Refused inside a transaction: the registration only takes effect at commit, so a rollback would undo
+	it while #listeningChannels still lists it. A replacement connection listens again, see
+	#restoreListening:."
+
+	self checkChannelName: channelName.
+	self critical: [
+		self checkOutsideTransaction.
+		self execute: 'LISTEN ' , (self quotedIdentifier: channelName).
+		listeningChannels add: channelName.
+		self logListen: #listen channel: channelName ]
+]
+
+{ #category : 'notifications' }
+P3Client >> listeningChannels [
+	"The channels my session subscribed to through #listen:, as a copy. A LISTEN sent as plain SQL is not
+	tracked here, so it is neither restored on a new connection nor listed."
+
+	^ self critical: [ listeningChannels copy ]
+]
+
 { #category : 'configuration' }
 P3Client >> loadEnums [
 	"Define converters for all ENUM types of the database, and for the arrays of them, converting their
@@ -1022,6 +1088,13 @@ P3Client >> logDisconnected [
 P3Client >> logError: error [
 	(self newLogEvent: P3ErrorOccurredEvent)
 		exception: error;
+		emit
+]
+
+{ #category : 'private - logging' }
+P3Client >> logListen: actionSymbol channel: channelNameOrNil [
+	(self newLogEvent: P3ListenEvent)
+		action: actionSymbol channel: channelNameOrNil;
 		emit
 ]
 
@@ -1163,6 +1236,15 @@ P3Client >> notifications [
 	them. A connection that LISTENs and never consumes them collects them without bound."
 
 	^ self critical: [ notifications asArray ]
+]
+
+{ #category : 'notifications' }
+P3Client >> notify: channelName payload: aString [
+	"Send a NOTIFY on channelName with aString as payload, through pg_notify with both as parameters, so
+	neither is ever part of the SQL text. Inside a transaction it is delivered at commit, and not at all on
+	rollback. The server refuses an empty or too long channel name and a payload of 8000 bytes or more."
+
+	(self prepare: 'SELECT pg_notify($1, $2)') execute: { channelName. aString }
 ]
 
 { #category : 'initialize-release' }
@@ -1432,6 +1514,18 @@ P3Client >> queryEncoding [
 	"An alias used by PharoDatabaseAccessor, kept for compatibility"
 	
 	^ self serverEncoding
+]
+
+{ #category : 'private' }
+P3Client >> quotedIdentifier: aString [
+	"aString as an SQL quoted identifier: between double quotes, with each double quote doubled."
+
+	^ String streamContents: [ :out |
+		out nextPut: $".
+		aString do: [ :each |
+			each = $" ifTrue: [ out nextPut: $" ].
+			out nextPut: each ].
+		out nextPut: $" ]
 ]
 
 { #category : 'private' }
@@ -2053,6 +2147,31 @@ P3Client >> unixSocketFile [
 	^ file isDirectory
 		ifTrue: [ file / ('.s.PGSQL.' , self port asString) ]
 		ifFalse: [ file ]
+]
+
+{ #category : 'notifications' }
+P3Client >> unlisten: channelName [
+	"Unsubscribe my session from channelName. Notifications already received stay queued.
+	See #listen: for the name and the transaction rules."
+
+	self checkChannelName: channelName.
+	self critical: [
+		self checkOutsideTransaction.
+		self execute: 'UNLISTEN ' , (self quotedIdentifier: channelName).
+		listeningChannels remove: channelName ifAbsent: [ ].
+		self logListen: #unlisten channel: channelName ]
+]
+
+{ #category : 'notifications' }
+P3Client >> unlistenAll [
+	"Unsubscribe my session from every channel, including ones subscribed with plain SQL.
+	Notifications already received stay queued. Refused inside a transaction, see #listen:."
+
+	self critical: [
+		self checkOutsideTransaction.
+		self execute: 'UNLISTEN *'.
+		listeningChannels removeAll.
+		self logListen: #unlistenAll channel: nil ]
 ]
 
 { #category : 'protocol' }

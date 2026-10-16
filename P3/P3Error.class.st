@@ -118,6 +118,24 @@ P3Error class >> copyNotSupported [
 ]
 
 { #category : 'accessing' }
+P3Error class >> invalidChannelName: channelName reason: reasonString [
+	"LISTEN, UNLISTEN and NOTIFY take a channel name that the server would refuse or truncate."
+
+	^ self new
+		info: { $C->'P3070'. $M->('Invalid channel name {1}: {2}' format: { channelName printString. reasonString }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> listenInsideTransaction [
+	"LISTEN and UNLISTEN take effect at commit, so a rollback would undo them behind P3Client>>#listeningChannels."
+
+	^ self new
+		info: { $C->'P3071'. $M->'LISTEN and UNLISTEN are refused inside a transaction, a rollback would undo them' } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> noArgumentForPlaceholder: position [
 	^ self new 
 		info: { $C->'P3062'. $M->('No argument for placeholder ${1}' format: { position }) } asDictionary; 

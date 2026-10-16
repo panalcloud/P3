@@ -8,11 +8,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3UnknownTypeSignalsTest >> expectedFailures [
-	^ #( #testConverterWithoutFallbackSignalsForUnknownOid #testUnknownScalarTypeSignals )
-]
-
 { #category : 'tests' }
 P3UnknownTypeSignalsTest >> testConverterWithoutFallbackSignalsForUnknownOid [
 	| converter description |

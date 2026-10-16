@@ -91,6 +91,9 @@ Class {
 		'extendedRequest',
 		'transactionLost'
 	],
+	#classInstVars : [
+		'unknownTypesAsTextByDefault'
+	],
 	#category : 'P3-Core',
 	#package : 'P3',
 	#tag : 'Core'
@@ -101,6 +104,20 @@ P3Client class >> defaultApplicationName [
 	"The name of this Pharo, major and minor version."
 
 	^ 'Pharo {1}.{2}' format: { SystemVersion current major. SystemVersion current minor }
+]
+
+{ #category : 'accessing' }
+P3Client class >> unknownTypesAsTextByDefault [
+	"Whether new clients answer a column of a type without a converter as its text, see P3Client>>#enableUnknownTypesAsText:. False unless set."
+
+	^ unknownTypesAsTextByDefault ifNil: [ false ]
+]
+
+{ #category : 'accessing' }
+P3Client class >> unknownTypesAsTextByDefault: aBoolean [
+	"Set the default of #enableUnknownTypesAsText: for clients that do not set it themselves."
+
+	unknownTypesAsTextByDefault := aBoolean
 ]
 
 { #category : 'instance creation' }
@@ -141,6 +158,12 @@ P3Client >> applicationName: aStringOrNil [
 	"Set the application_name sent with the startup, so it holds for connections opened after this call."
 
 	settings at: #applicationName put: aStringOrNil
+]
+
+{ #category : 'private' }
+P3Client >> applyUnknownTypesSetting [
+	self converter unknownTypeConverter: (self isUnknownTypesAsTextEnabled
+		ifTrue: [ #convertStringFrom:length:description: ])
 ]
 
 { #category : 'private' }
@@ -511,6 +534,16 @@ P3Client >> discardedError [
 	^ discardedError
 ]
 
+{ #category : 'accessing' }
+P3Client >> enableUnknownTypesAsText: aBoolean [
+	"When true, a column of a type that has no converter is answered as the text the server sent.
+	The default is false: such a column signals a P3Error, because the caller is reading data that it
+	does not handle. The setting holds for the connection that is open and for later ones."
+
+	settings at: #unknownTypesAsText put: aBoolean.
+	self applyUnknownTypesSetting
+]
+
 { #category : 'private' }
 P3Client >> ensureConnected [
 	"Open my connection when it is not open. A connection that is still there but no longer works is
@@ -713,7 +746,8 @@ P3Client >> initialize [
 { #category : 'private' }
 P3Client >> initializeConverter [
 	self converter initializeFrom: properties.
-	self converter timestampClass: self timestampClass
+	self converter timestampClass: self timestampClass.
+	self applyUnknownTypesSetting
 ]
 
 { #category : 'testing' }
@@ -778,6 +812,11 @@ P3Client >> isTransactionLost [
 	reconnect silently, see #closeAfterFailure."
 
 	^ transactionLost
+]
+
+{ #category : 'testing' }
+P3Client >> isUnknownTypesAsTextEnabled [
+	^ settings at: #unknownTypesAsText ifAbsent: [ self class unknownTypesAsTextByDefault ]
 ]
 
 { #category : 'testing' }

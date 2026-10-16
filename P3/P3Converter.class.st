@@ -18,7 +18,8 @@ Class {
 		'timestampClass',
 		'unknownTimezoneName',
 		'dateStyle',
-		'intervalStyle'
+		'intervalStyle',
+		'unknownTypeConverter'
 	],
 	#category : 'P3-Support',
 	#package : 'P3',
@@ -122,7 +123,9 @@ P3Converter >> clientEncoding: aString [
 { #category : 'converting' }
 P3Converter >> convert: bytes length: length description: description [
 	| converter |
-	converter := (map mappingAt: description typeOid ifAbsent: [ ^ (P3Error cannotConvertTypeOid: description typeOid) signal ]) converter.
+	converter := (map mappingAt: description typeOid ifAbsent: [ nil ])
+		ifNil: [ unknownTypeConverter ifNil: [ ^ (P3Error cannotConvertTypeOid: description typeOid) signal ] ]
+		ifNotNil: [ :mapping | mapping converter ].
 	^ converter isSymbol
 		ifTrue: [ self perform: converter with: bytes with: length with: description ]
 		ifFalse: [ converter value: bytes value: length value: description ]
@@ -685,6 +688,14 @@ P3Converter >> timezoneName [
 { #category : 'accessing' }
 P3Converter >> typeMap [
 	^ map
+]
+
+{ #category : 'accessing' }
+P3Converter >> unknownTypeConverter: aSelectorBlockOrNil [
+	"Read the values of a type without a converter with aSelectorBlockOrNil, a selector or a block like
+	the ones of #mapOid:type:to:. Without one, which is the default, such a value signals a P3Error."
+
+	unknownTypeConverter := aSelectorBlockOrNil
 ]
 
 { #category : 'testing' }

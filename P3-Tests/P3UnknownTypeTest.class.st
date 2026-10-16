@@ -8,11 +8,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3UnknownTypeTest >> expectedFailures [
-	^ #( #testClassSideDefaultAppliesToNewClients #testFallbackCanBeDisabledAgain #testFallbackSurvivesReconnect #testUnknownScalarTypesAnswerTheirText #testUnknownTypeInPreparedStatementAnswersItsText #testUnknownTypeKeepsConnectionInStep )
-]
-
 { #category : 'running' }
 P3UnknownTypeTest >> setUp [
 	super setUp.

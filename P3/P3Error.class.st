@@ -20,9 +20,25 @@ Class {
 }
 
 { #category : 'accessing' }
+P3Error class >> authenticationNotAllowed: methodName [
+	"The server asked for an authentication method that the client does not accept, see P3Client>>#requireAuth:."
+
+	^ self new
+		info: { $C->'P3023'. $M->('Authentication method "{1}" is not accepted, see #requireAuth:' format: { methodName }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> bindCompleteExpected [
 	^ self new 
 		info: { $C->'P3004'. $M->'BindComplete message expected' } asDictionary; 
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> cannotBindObject: object [
+	^ self new 
+		info: { $C->'P3061'. $M->('Cannot bind {1} as a parameter' format: { object class name }) } asDictionary; 
 		yourself
 ]
 
@@ -34,9 +50,77 @@ P3Error class >> cannotConvertTypeOid: typeOid [
 ]
 
 { #category : 'accessing' }
+P3Error class >> cannotFormatObject: object [
+	^ self new 
+		info: { $C->'P3060'. $M->('Cannot write {1} as SQL text' format: { object class name }) } asDictionary; 
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> cannotReadInfinity: aText [
+	"A date or timestamp can be infinity or -infinity. Date and DateAndTime have no infinite value."
+
+	^ self new
+		info: { $C->'P3035'. $M->('Cannot read "{1}" as a date or timestamp, it is not a finite point in time. Select it cast to text to read it' format: { aText }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> cannotRepresentNumeric: numericText [
+	"A numeric can be NaN, Infinity or -Infinity. A ScaledDecimal is a fraction and has none of them."
+
+	^ self new
+		info: { $C->'P3034'. $M->('Cannot read numeric "{1}" as a ScaledDecimal, it is not a finite number' format: { numericText }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> closeCompleteExpected [
 	^ self new 
 		info: { $C->'P3005'. $M->'CloseComplete message expected' } asDictionary; 
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> commitReportedAs: resultTag [
+	"COMMIT on a failed transaction does not commit: the server runs a ROLLBACK and reports that as the command tag."
+
+	^ self new
+		info: { $C->'P3051'. $M->('COMMIT was not honored, the server reports {1}' format: { resultTag }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> connectionLost [
+	"See P3Client>>#autoReconnect: the connection went away and it is not to be replaced on its own."
+
+	^ self new
+		info: { $C->'P3052'. $M->'Connection was lost and autoReconnect is off, reconnect explicitly to continue' } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> connectionLostInTransaction [
+	"The connection was lost while a transaction was open: the server rolled it back."
+
+	^ self new
+		info: { $C->'P3050'. $M->'Connection lost inside a transaction, which the server rolled back. Use #connect to start a new session' } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> copyNotSupported [
+	"COPY streams its data in messages of its own, which are neither produced nor read."
+
+	^ self new
+		info: { $C->'P3007'. $M->'COPY to or from STDIN/STDOUT is not supported' } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> noArgumentForPlaceholder: position [
+	^ self new 
+		info: { $C->'P3062'. $M->('No argument for placeholder ${1}' format: { position }) } asDictionary; 
 		yourself
 ]
 
@@ -83,6 +167,33 @@ P3Error class >> readyForQueryExpected [
 ]
 
 { #category : 'accessing' }
+P3Error class >> statementClosed: statementName [
+	"A closed prepared statement has no connection and can no longer run."
+
+	^ self new
+		info: { $C->'P3053'. $M->('Prepared statement "{1}" is closed' format: { statementName }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> statementCompletedAfterTimeout [
+	"The read timed out, but the statement completed before the cancel reached the server. Its result was not read."
+
+	^ self new
+		info: { $C->'P3054'. $M->'The statement completed after the read timed out, its result was discarded' } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> unexpectedMessage: tag [
+	"A message that cannot be placed in the response being read: the message stream is out of step."
+
+	^ self new
+		info: { $C->'P3006'. $M->('Unexpected message {1} while reading a response' format: { tag asString }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> unexpectedMessageDuringAuthentication [
 	^ self new 
 		info: { $C->'P3020'. $M->'Unexpected message during authentication' } asDictionary; 
@@ -97,9 +208,52 @@ P3Error class >> unexpectedMessageDuringStartup [
 ]
 
 { #category : 'accessing' }
+P3Error class >> unknownTimezone: zoneName [
+	"The session time zone has a name that cannot be resolved, so a time without a zone cannot be placed."
+
+	^ self new
+		info: { $C->'P3036'. $M->('Cannot read a time without a zone: the server time zone "{1}" is unknown, use a named zone with SET TIME ZONE' format: { zoneName }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> unreadableValue: typeName text: valueText [
+	"The text of a value is not in any format the server writes for its type."
+
+	^ self new
+		info: { $C->'P3037'. $M->('Cannot read the {1} value "{2}", it is not in a format the server writes' format: { typeName. valueText }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> unsupportedAuthenticationType: type [
 	^ self new 
 		info: { $C->'P3022'. $M->('Unsupported authentication type {1}' format: { type }) } asDictionary; 
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> unsupportedDateStyle: dateStyle [
+	"Dates, times and timestamps are read as ISO 8601, which only DateStyle ISO produces."
+
+	^ self new
+		info: { $C->'P3032'. $M->('Cannot read dates under DateStyle "{1}", ISO is required' format: { dateStyle }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> unsupportedIntervalStyle: intervalStyle [
+	"P3Interval reads the postgres output format only."
+
+	^ self new
+		info: { $C->'P3033'. $M->('Cannot read intervals under IntervalStyle "{1}", postgres is required' format: { intervalStyle }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> unsupportedSslMode: aMode [
+	^ self new
+		info: { $C->'P3041'. $M->('Unsupported sslmode "{1}", use disable or require' format: { aMode }) } asDictionary;
 		yourself
 ]
 

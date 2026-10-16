@@ -2,6 +2,7 @@ SmalltalkCISpec {
   #loading : [
     SCIMetacelloLoadSpec {
       #baseline : 'P3',
+      #load : [ 'default', 'glorp-tests' ],
       #platforms : [ #pharo ]
     }
   ]

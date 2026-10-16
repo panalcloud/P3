@@ -13,6 +13,13 @@ You could then try (general URL psql://username:password@localhost:5432/database
 	(P3Client new url: 'psql://sven@localhost') in: [ :client |
 		[ client isWorking  ] ensure: [ client close ] ].
 
+The benchmarks group loads P3Benchmark, which measures the client, see its class comment
+
+	Metacello new
+		baseline: 'P3';
+		repository: 'github://svenvc/P3';
+		load: 'benchmarks'.
+
 The glorp group loads P3DatabaseDriver and the whole of Glorp (warning: large download)
 
 	Metacello new
@@ -36,12 +43,13 @@ Use a login that looks as follows
 
 "
 Class {
-	#name : #BaselineOfP3,
-	#superclass : #BaselineOf,
-	#category : #BaselineOfP3
+	#name : 'BaselineOfP3',
+	#superclass : 'BaselineOf',
+	#category : 'BaselineOfP3',
+	#package : 'BaselineOfP3'
 }
 
-{ #category : #baseline }
+{ #category : 'baseline' }
 BaselineOfP3 >> baselineOf: spec [
 	<baseline>
 	spec
@@ -52,8 +60,12 @@ BaselineOfP3 >> baselineOf: spec [
 			spec baseline: 'Glorp' with: [ spec repository: 'github://pharo-rdbms/glorp:master/'].
 			spec package: 'P3' with: [ spec requires: #('NeoJSON' 'ZTimestamp') ].
 			spec package: 'P3-Tests' with: [ spec requires: #('P3') ].
+			spec package: 'P3-Benchmarks' with: [ spec requires: #('P3') ].
 			spec package: 'P3-Glorp' with: [ spec requires: #('P3' 'Glorp') ].
+			spec package: 'P3-Glorp-Tests' with: [ spec requires: #('P3-Glorp' 'P3-Tests') ].
 			spec group: 'default' with: #('P3' 'P3-Tests').
 			spec group: 'core' with: #('P3').
-			spec group: 'glorp' with: #('P3-Glorp') ]
+			spec group: 'benchmarks' with: #('P3-Benchmarks').
+			spec group: 'glorp' with: #('P3-Glorp').
+			spec group: 'glorp-tests' with: #('P3-Glorp' 'P3-Glorp-Tests') ]
 ]

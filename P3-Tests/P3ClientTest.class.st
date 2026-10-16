@@ -53,11 +53,6 @@ P3ClientTest >> benchmark1Size [
 	^ 10000
 ]
 
-{ #category : 'accessing' }
-P3ClientTest >> expectedFailures [
-	^ #( #testConnectionEventCarriesNoSecrets )
-]
-
 { #category : 'benchmarking' }
 P3ClientTest >> runAllTests [
 	"Runs all tests on the same connection/session"

@@ -31,7 +31,9 @@ P3ConnectionEstablishedEvent >> authenticationType [
 
 { #category : 'initialization' }
 P3ConnectionEstablishedEvent >> clearPassword [
-	settings removeKey: #password
+	"The event no longer carries the password, there is nothing to clear."
+
+	self deprecated: 'A connection event carries no password'
 ]
 
 { #category : 'accessing' }
@@ -51,7 +53,10 @@ P3ConnectionEstablishedEvent >> isSSL [
 
 { #category : 'accessing' }
 P3ConnectionEstablishedEvent >> password [
-	^ settings at: #password ifAbsent: [ nil ]
+	"The event no longer carries the password."
+
+	self deprecated: 'A connection event carries no password'.
+	^ nil
 ]
 
 { #category : 'accessing' }

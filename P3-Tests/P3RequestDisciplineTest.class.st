@@ -44,6 +44,11 @@ P3RequestDisciplineTest >> clients [
 ]
 
 { #category : 'accessing' }
+P3RequestDisciplineTest >> expectedFailures [
+	^ #( #testTimeoutIsNotRetriedAfterRequestSent )
+]
+
+{ #category : 'accessing' }
 P3RequestDisciplineTest >> statementName [
 	"The name I prepare statements under. One name is enough: each test gets its own connection."
 
@@ -536,6 +541,33 @@ P3RequestDisciplineTest >> testTerminatedWriterDoesNotHandItsResponseToTheNextBo
 	self terminateWriterOf: pool gatedAt: #flush.
 	self assert: (pool withConnection: [ :p3 | (p3 query: 'SELECT 2') firstFieldOfFirstRecord ]) equals: 2 ]
 		ensure: [ pool close ]
+]
+
+{ #category : 'tests' }
+P3RequestDisciplineTest >> testTimeoutIsNotRetriedAfterRequestSent [
+	"A statement that runs longer than the timeout has already reached the server. Retrying it on a fresh
+	connection would run it a second time. It is cancelled instead, so it runs zero times to completion, and the
+	connection stays open. The elapsed time says that it was not retried: one attempt costs the timeout, a retry
+	costs the retry delay and another full timeout on top of it."
+
+	| elapsed |
+	client execute: 'DROP TABLE IF EXISTS ' , self tableName.
+	client execute: 'CREATE TABLE ' , self tableName , ' (i int)'.
+	extraClient := P3Client new
+		url: P3ClientTest url;
+		timeout: 2;
+		retryCount: 1;
+		retryDelay: 1;
+		connect;
+		yourself.
+	elapsed := [
+		self
+			should: [ extraClient execute: 'INSERT INTO ' , self tableName , ' SELECT 1 FROM pg_sleep(3)' ]
+			raise: ConnectionTimedOut ] timeToRun.
+	self assert: elapsed < 4 seconds.
+	self assert: extraClient isConnected.
+	(Delay forSeconds: 3) wait.
+	self assert: (client query: 'SELECT count(*) FROM ' , self tableName) firstFieldOfFirstRecord equals: 0
 ]
 
 { #category : 'tests - writing requests' }

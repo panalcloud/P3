@@ -25,6 +25,8 @@ However a borrower ends, I decide myself whether its connection can be reused: a
 
 A pooled connection keeps its server session between borrowers, with what was set or prepared in it: a statement that one borrower prepared is answered to the next one by #prepare:, and closing it closes it for both. When a connection is replaced by a new session, my configurator runs again on it.
 
+Notifications are the exception: a borrower's LISTEN registrations, queued notifications and notification handler are not the next one's. See #resetNotificationsOf:. A connection that listens for an application, like a change feed, should be dedicated and never come from a pool.
+
 "
 Class {
 	#name : 'P3ConnectionPool',
@@ -122,13 +124,32 @@ P3ConnectionPool >> printOn: stream [
 P3ConnectionPool >> releaseConnection: connection [
 	"Return connection (a P3Client) to the pool.
 	A connection that is not reusable, see #isReusable:, is closed instead, as is one that arrives
-	when the pool is at its capacity.
+	when the pool is at its capacity, or one whose notification state cannot be reset, see
+	#resetNotificationsOf:.
 	After this, the caller can no longer use connection."
 
+	| reusable |
+	reusable := (self isReusable: connection) and: [ self resetNotificationsOf: connection ].
 	access critical: [
-		(pool size < pool capacity and: [ self isReusable: connection ])
+		(reusable and: [ pool size < pool capacity ])
 			ifTrue: [ pool addLast: connection ]
 			ifFalse: [ [ connection close ] on: Error do: [ :exception | ] ] ]
+]
+
+{ #category : 'private' }
+P3ConnectionPool >> resetNotificationsOf: connection [
+	"Make connection forget the LISTEN registrations, queued notifications and handler of its borrower,
+	which would otherwise reach the next one. Answer whether that worked. UNLISTEN * is only sent when
+	the connection listens through P3Client>>#listen: or has notifications queued: a LISTEN in plain SQL
+	that brought nothing yet goes unseen. A connection that listens should not be pooled at all."
+
+	connection notificationHandler: nil.
+	(connection listeningChannels isEmpty and: [ connection hasNotifications not ])
+		ifTrue: [ ^ true ].
+	^ [ connection unlistenAll; takeNotifications.
+		true ]
+		on: Error
+		do: [ :error | false ]
 ]
 
 { #category : 'accessing' }

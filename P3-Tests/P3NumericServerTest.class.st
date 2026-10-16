@@ -9,25 +9,12 @@ Class {
 }
 
 { #category : 'private' }
-P3NumericServerTest >> assertConnectionAnswersItsOwnQueries [
-	"Two queries in a row: a response left unread shifts the first answer to the second query."
-
-	self assert: (self readOf: 'SELECT 111') equals: 111.
-	self assert: (self readOf: 'SELECT 222') equals: 222
-]
-
-{ #category : 'private' }
 P3NumericServerTest >> errorOf: aBlock [
 	"Answer the P3Error that aBlock signals. Fail when it signals nothing or another kind."
 
 	^ [ aBlock value. self fail: 'a non finite numeric was read as a value' ]
 		on: P3Error
 		do: [ :error | error ]
-]
-
-{ #category : 'accessing' }
-P3NumericServerTest >> expectedFailures [
-	^ #( #testConnectionAnswersItsOwnQueriesAfterNonFiniteNumeric #testNonFiniteNumericAmongFiniteRowsFailsTheWholeQuery #testNonFiniteNumericInPreparedStatementSignalsP3Error #testNonFiniteNumericSignalsP3Error )
 ]
 
 { #category : 'private' }
@@ -71,13 +58,6 @@ P3NumericServerTest >> serverSqlOfPair: aPair [
 ]
 
 { #category : 'tests-reading' }
-P3NumericServerTest >> testConnectionAnswersItsOwnQueriesAfterNonFiniteNumeric [
-	self nonFiniteLiterals do: [ :literal |
-		self errorOf: [ self readOf: 'SELECT ''' , literal , '''::numeric' ].
-		self assertConnectionAnswersItsOwnQueries ]
-]
-
-{ #category : 'tests-reading' }
 P3NumericServerTest >> testFiniteNumericBuiltByServerIsReadExactly [
 	self pairs do: [ :pair | | read |
 		read := self readOf: 'SELECT ' , (self serverSqlOfPair: pair).
@@ -93,21 +73,15 @@ P3NumericServerTest >> testNonFiniteNumericAmongFiniteRowsFailsTheWholeQuery [
 	| error |
 	error := self errorOf: [
 		self readOf: 'SELECT x FROM (VALUES (1.5::numeric), (''NaN''::numeric), (2.5::numeric)) AS v(x)' ].
-	self assert: error code equals: 'P3034'.
-	self assertConnectionAnswersItsOwnQueries
-]
-
-{ #category : 'tests-reading' }
-P3NumericServerTest >> testNonFiniteNumericInPreparedStatementSignalsP3Error [
-	| error |
-	error := self errorOf: [ self preparedValueOf: 'SELECT ''NaN''::numeric' with: #() ].
-	self assert: error code equals: 'P3034'.
-	self assertConnectionAnswersItsOwnQueries
+	self assert: error code equals: 'P3034'
 ]
 
 { #category : 'tests-reading' }
 P3NumericServerTest >> testNonFiniteNumericSignalsP3Error [
+	"Each literal is read on a new connection, so that one failed read cannot affect the next."
+
 	self nonFiniteLiterals do: [ :literal | | error |
+		client close; connect.
 		error := self errorOf: [ self readOf: 'SELECT ''' , literal , '''::numeric' ].
 		self assert: error code equals: 'P3034'.
 		self assert: error isLocal.

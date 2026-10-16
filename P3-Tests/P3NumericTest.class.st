@@ -17,11 +17,6 @@ P3NumericTest >> errorReading: aString [
 		do: [ :error | error ]
 ]
 
-{ #category : 'accessing' }
-P3NumericTest >> expectedFailures [
-	^ #( #testErrorNamesTheTargetType #testNonFiniteValuesSignalP3Error #testReadFiniteValues #testReadIsExactForLongValues #testReadKeepsTheScaleOfTheText )
-]
-
 { #category : 'private' }
 P3NumericTest >> readNumeric: aString [
 	^ P3Converter new scaledDecimalFrom: aString

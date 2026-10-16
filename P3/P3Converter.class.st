@@ -16,7 +16,9 @@ Class {
 		'asciiReadStream',
 		'asciiWriteStream',
 		'timestampClass',
-		'unknownTimezoneName'
+		'unknownTimezoneName',
+		'dateStyle',
+		'intervalStyle'
 	],
 	#category : 'P3-Support',
 	#package : 'P3',
@@ -28,6 +30,22 @@ P3Converter class >> exactPowersOfTen [
 	"10 raisedTo: 0 to 22, each exactly representable as a Float"
 
 	^ #(1.0e0 1.0e1 1.0e2 1.0e3 1.0e4 1.0e5 1.0e6 1.0e7 1.0e8 1.0e9 1.0e10 1.0e11 1.0e12 1.0e13 1.0e14 1.0e15 1.0e16 1.0e17 1.0e18 1.0e19 1.0e20 1.0e21 1.0e22)
+]
+
+{ #category : 'accessing' }
+P3Converter class >> isoDateStyleTypeOids [
+	"The type OIDs whose text I read as ISO 8601: date, time, timestamp, timestamptz, timetz.
+	Only DateStyle ISO produces that text. See P3Converter>>#dateStyle:."
+
+	^ #( 1082 1083 1114 1184 1266 )
+]
+
+{ #category : 'accessing' }
+P3Converter class >> postgresIntervalStyleTypeOids [
+	"The type OIDs whose text I read in the 'postgres' output format: interval.
+	See P3Converter>>#intervalStyle:."
+
+	^ #( 1186 )
 ]
 
 { #category : 'accessing' }
@@ -88,6 +106,17 @@ P3Converter >> byteArrayFromEscapeFormat: text [
 					in peek = 92
 						ifTrue: [ out nextPut: in next ]
 						ifFalse: [ out nextPut: (self octalValueOf: (in next: 3)) ] ] ] ]
+]
+
+{ #category : 'accessing' }
+P3Converter >> clientEncoding: aString [
+	"Read values with the encoding the server says it is sending. An encoding I have no encoder for
+	leaves the current one in place: the values will then fail to decode, which is better than
+	decoding them under a name I cannot honour."
+
+	[ self encoder: (ZnCharacterEncoder newForEncoding: aString) ]
+		on: Error
+		do: [ :error | error return ]
 ]
 
 { #category : 'converting' }
@@ -365,6 +394,21 @@ P3Converter >> convertVoidFrom: bytes length: length description: description [
 	^ nil
 ]
 
+{ #category : 'accessing' }
+P3Converter >> dateStyle: aString [
+	"The session's DateStyle. I read dates and timestamps as ISO 8601, which only DateStyle ISO produces.
+	Under another style the same text is a different date and P3ISO8601Parser cannot tell: Postgres style
+	prints 0031-01-01 as 01-01-0031, which is valid ISO for 0001-01-31. So the style decides what the
+	chronology OIDs map to, the parser or a converter that refuses, and reading a value costs nothing."
+
+	dateStyle := aString.
+	self
+		installConvertersFor: self class isoDateStyleTypeOids
+		refusing: (self usesISODateStyle
+			ifTrue: [ nil ]
+			ifFalse: [ [ :bytes :length :description | (P3Error unsupportedDateStyle: dateStyle) signal ] ])
+]
+
 { #category : 'input/output' }
 P3Converter >> encodedCStringFrom: binaryStream [
 	stringWriteStream reset.
@@ -457,14 +501,15 @@ P3Converter >> initialize [
 
 { #category : 'initialize' }
 P3Converter >> initializeFrom: properties [
-	| serverEncoder |
-	"Resolve the session/connection timezone, see #serverTimezone:"
+	"Resolve the session/connection time zone, see #serverTimezone:"
+
 	self serverTimezone: (properties at: 'TimeZone' ifAbsent: [ 'GMT' ]).
-	"Try to resolve the session/connection character encoder/decoder"
-	serverEncoder := properties at: 'client_encoding' ifAbsent: [ 'UTF8' ].
-	"The fallback for unknown encodings is normally UTF8 but can be overwritten ZnDefaultCharacterEncoder."
-	serverEncoder := ZnCharacterEncoder newForEncoding: serverEncoder.
-	self encoder: serverEncoder
+	"The character encoder/decoder, as when the server reports a change: a name that I have no encoder for
+	leaves UTF-8 in place and does not fail the connect."
+	self clientEncoding: (properties at: 'client_encoding' ifAbsent: [ 'UTF8' ]).
+	"The output styles I can read. A missing one means the server did not report it, so assume its default."
+	self dateStyle: (properties at: 'DateStyle' ifAbsent: [ nil ]).
+	self intervalStyle: (properties at: 'IntervalStyle' ifAbsent: [ nil ])
 ]
 
 { #category : 'initialize' }
@@ -474,6 +519,36 @@ P3Converter >> initializeTypeMap [
 	map := P3TypeMap standard extension
 ]
 
+{ #category : 'private' }
+P3Converter >> installConvertersFor: typeOids refusing: aBlockOrNil [
+	"Point typeOids at their standard converters, or at aBlockOrNil when that is not nil. The session's
+	output styles decide which, and they only change when the server reports a change, so the decision is
+	made here instead of on every value read. A caller that installed its own converter for one of these
+	OIDs loses it when a style changes."
+
+	typeOids do: [ :oid |
+		aBlockOrNil
+			ifNil: [ map restoreOid: oid ]
+			ifNotNil: [ map
+				mapOid: oid
+				type: (P3TypeMap standard nameAt: oid ifAbsent: [ oid ])
+				to: aBlockOrNil ] ]
+]
+
+{ #category : 'accessing' }
+P3Converter >> intervalStyle: aString [
+	"The session's IntervalStyle. P3Interval reads the 'postgres' format; the other styles drop or move
+	components, so the style decides whether the interval OID maps to P3Interval or to a converter that
+	refuses. See #dateStyle: for why this is decided here."
+
+	intervalStyle := aString.
+	self
+		installConvertersFor: self class postgresIntervalStyleTypeOids
+		refusing: (self usesPostgresIntervalStyle
+			ifTrue: [ nil ]
+			ifFalse: [ [ :bytes :length :description | (P3Error unsupportedIntervalStyle: intervalStyle) signal ] ])
+]
+
 { #category : 'accessing' }
 P3Converter >> mapOid: anOoid type: aTypename to: aBlockOrSymbol [
 	^ map mapOid: anOoid type: aTypename to: aBlockOrSymbol
@@ -481,10 +556,14 @@ P3Converter >> mapOid: anOoid type: aTypename to: aBlockOrSymbol [
 
 { #category : 'initialize' }
 P3Converter >> noteSessionParameter: key value: value [
-	"React to a server parameter that decides how I read values. The server reports each change
-	as a ParameterStatus message."
+	"React to a server parameter that decides how I read values. Values arrive as text, so these four
+	change what that text means, and the server reports each change as a ParameterStatus message.
+	Anything else I do not care about."
 
-	key = 'TimeZone' ifTrue: [ ^ self serverTimezone: value ]
+	key = 'client_encoding' ifTrue: [ ^ self clientEncoding: value ].
+	key = 'TimeZone' ifTrue: [ ^ self serverTimezone: value ].
+	key = 'DateStyle' ifTrue: [ ^ self dateStyle: value ].
+	key = 'IntervalStyle' ifTrue: [ ^ self intervalStyle: value ]
 ]
 
 { #category : 'converting' }
@@ -567,4 +646,20 @@ P3Converter >> timezoneName [
 { #category : 'accessing' }
 P3Converter >> typeMap [
 	^ map
+]
+
+{ #category : 'testing' }
+P3Converter >> usesISODateStyle [
+	"DateStyle ISO is the only one whose date and timestamp text is ISO 8601. Nil means nobody told me a
+	style, so assume the server default, which is ISO."
+
+	^ dateStyle isNil or: [ dateStyle beginsWith: 'ISO' ]
+]
+
+{ #category : 'testing' }
+P3Converter >> usesPostgresIntervalStyle [
+	"'postgres' is the interval output format P3Interval reads. Nil means nobody told me a style, so assume
+	the server default, which is postgres."
+
+	^ intervalStyle isNil or: [ intervalStyle = 'postgres' ]
 ]

@@ -215,6 +215,24 @@ P3Error class >> unsupportedAuthenticationType: type [
 ]
 
 { #category : 'accessing' }
+P3Error class >> unsupportedDateStyle: dateStyle [
+	"Dates, times and timestamps are read as ISO 8601, which only DateStyle ISO produces."
+
+	^ self new
+		info: { $C->'P3032'. $M->('Cannot read dates under DateStyle "{1}", ISO is required' format: { dateStyle }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
+P3Error class >> unsupportedIntervalStyle: intervalStyle [
+	"P3Interval reads the postgres output format only."
+
+	^ self new
+		info: { $C->'P3033'. $M->('Cannot read intervals under IntervalStyle "{1}", postgres is required' format: { intervalStyle }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> unsupportedSslMode: aMode [
 	^ self new
 		info: { $C->'P3041'. $M->('Unsupported sslmode "{1}", use disable or require' format: { aMode }) } asDictionary;

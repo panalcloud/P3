@@ -14,11 +14,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3SessionParameterTest >> expectedFailures [
-	^ #( #testApplicationNameDefaultsToThePharoVersionAndCanBeChanged #testClientEncodingChangeIsApplied #testStartupPinsTheOutputFormats )
-]
-
 { #category : 'tests' }
 P3SessionParameterTest >> testApplicationNameDefaultsToThePharoVersionAndCanBeChanged [
 	| name other |

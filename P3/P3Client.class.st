@@ -96,6 +96,13 @@ Class {
 	#tag : 'Core'
 }
 
+{ #category : 'accessing' }
+P3Client class >> defaultApplicationName [
+	"The name of this Pharo, major and minor version."
+
+	^ 'Pharo {1}.{2}' format: { SystemVersion current major. SystemVersion current minor }
+]
+
 { #category : 'instance creation' }
 P3Client class >> url: anUrl [
 	^ self new url: anUrl 
@@ -119,6 +126,21 @@ P3Client >> abandonCopyIn [
 			yourself) asBytes
 		tag: $f.
 	extendedRequest ifTrue: [ self writeMessage: #[] tag: $S ]
+]
+
+{ #category : 'accessing' }
+P3Client >> applicationName [
+	"The application_name the server shows in pg_stat_activity and its logs. Defaults to the Pharo
+	version, like Pharo 13.1. Nil sends none."
+
+	^ settings at: #applicationName ifAbsent: [ self class defaultApplicationName ]
+]
+
+{ #category : 'accessing' }
+P3Client >> applicationName: aStringOrNil [
+	"Set the application_name sent with the startup, so it holds for connections opened after this call."
+
+	settings at: #applicationName put: aStringOrNil
 ]
 
 { #category : 'private' }
@@ -1697,6 +1719,11 @@ P3Client >> startReadTimeout [
 
 { #category : 'private messages' }
 P3Client >> startupMessage [
+	"The client_encoding is requested, whatever the role or the database default is, because I decode
+	what the server sends as UTF-8 until it reports another encoding. DateStyle and IntervalStyle are
+	requested because the converter reads only the ISO and postgres styles, and extra_float_digits so that
+	floats are written with all their digits. An application that wants others can say so in the options."
+
 	^ ByteArray streamContents: [ :out |
 			out nextPutAll: #[ 0 3 0 0 ]. "Protocol major.minor 3.0"
 			out nextPutAll: (self asCString: 'user').
@@ -1704,6 +1731,11 @@ P3Client >> startupMessage [
 			self database ifNotNil: [ 
 				out nextPutAll: (self asCString: 'database').
 				out nextPutAll: (self asCString: self database) ].
+			#( 'client_encoding' 'UTF8' 'DateStyle' 'ISO' 'IntervalStyle' 'postgres' 'extra_float_digits' '3' )
+				do: [ :each | out nextPutAll: (self asCString: each) ].
+			self applicationName ifNotNil: [ :name |
+				out nextPutAll: (self asCString: 'application_name').
+				out nextPutAll: (self asCString: name) ].
 			self startupOptions ifNotNil: [
 				out nextPutAll: (self asCString: 'options').
 				out nextPutAll: (self asCString: self startupOptions) ].

@@ -420,15 +420,18 @@ P3Client >> compactUrl [
 P3Client >> connect [
 	"Connect me to a PostgreSQL database on a new connection. 
 	Run the authentication and startup protocols. Configure the session.
-	Up to the end of the startup, waiting for the server is bounded by #connectTimeout, then by #timeout."
+	Up to the end of the startup, waiting for the server is bounded by #connectTimeout, then by #timeout.
+	See #restoreListening: for what happens to the channels I listened on."
 
-	self critical: [ 
+	self critical: [ | replacing |
+		replacing := connectionLost.
 		self
 			open;
 			connectInternal;
 			clearSSL;
 			startReadTimeout;
-			logConnected ]
+			logConnected;
+			restoreListening: replacing ]
 ]
 
 { #category : 'protocol' }
@@ -448,16 +451,19 @@ P3Client >> connectInternal [
 P3Client >> connectSSL [
 	"Connect me to a PostgreSQL database over a new encrypted SSL connection. 
 	Run the authentication and startup protocols. Configure the session.
-	Up to the end of the startup, waiting for the server is bounded by #connectTimeout, then by #timeout."
+	Up to the end of the startup, waiting for the server is bounded by #connectTimeout, then by #timeout.
+	See #restoreListening: for what happens to the channels I listened on."
 
-	self critical: [
+	self critical: [ | replacing |
+		replacing := connectionLost.
 		self
 			open;
 			upgradeToSSL;
 			connectInternal;
 			setSSL;
 			startReadTimeout;
-			logConnected ]
+			logConnected;
+			restoreListening: replacing ]
 ]
 
 { #category : 'accessing' }
@@ -1103,6 +1109,13 @@ P3Client >> logError: error [
 P3Client >> logListen: actionSymbol channel: channelNameOrNil [
 	(self newLogEvent: P3ListenEvent)
 		action: actionSymbol channel: channelNameOrNil;
+		emit
+]
+
+{ #category : 'private - logging' }
+P3Client >> logListenRestored: channels [
+	(self newLogEvent: P3ListenRestoredEvent)
+		channels: channels;
 		emit
 ]
 
@@ -1808,6 +1821,23 @@ P3Client >> reset [
 	properties removeAll.
 	discardedError := nil.
 	converter := nil
+]
+
+{ #category : 'private' }
+P3Client >> restoreListening: replacing [
+	"A new session has no LISTEN registrations. When it replaces one that was lost, issue LISTEN again for
+	#listeningChannels, in one request, before anything else uses it, and announce P3ListenRestoredEvent:
+	notifications sent meanwhile are lost. After a first connect or an explicit #close, forget them."
+
+	| channels |
+	replacing ifFalse: [ ^ listeningChannels removeAll ].
+	listeningChannels ifEmpty: [ ^ self ].
+	channels := listeningChannels asArray.
+	self execute: (String streamContents: [ :out |
+		channels
+			do: [ :each | out nextPutAll: 'LISTEN '; nextPutAll: (self quotedIdentifier: each) ]
+			separatedBy: [ out nextPutAll: '; ' ] ]).
+	self logListenRestored: channels
 ]
 
 { #category : 'accessing' }

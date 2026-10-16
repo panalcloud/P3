@@ -73,6 +73,15 @@ P3Error class >> closeCompleteExpected [
 ]
 
 { #category : 'accessing' }
+P3Error class >> commitReportedAs: resultTag [
+	"COMMIT on a failed transaction does not commit: the server runs a ROLLBACK and reports that as the command tag."
+
+	^ self new
+		info: { $C->'P3051'. $M->('COMMIT was not honored, the server reports {1}' format: { resultTag }) } asDictionary;
+		yourself
+]
+
+{ #category : 'accessing' }
 P3Error class >> noArgumentForPlaceholder: position [
 	^ self new 
 		info: { $C->'P3062'. $M->('No argument for placeholder ${1}' format: { position }) } asDictionary; 

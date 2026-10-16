@@ -40,7 +40,11 @@ P3DatabaseDriver >> beginTransaction [
 
 { #category : 'transactions' }
 P3DatabaseDriver >> commitTransaction [
-	connection execute: 'COMMIT TRANSACTION'
+	"After an error inside the transaction the server answers COMMIT with the tag ROLLBACK and no error of its own."
+
+	| result |
+	result := connection execute: 'COMMIT TRANSACTION'.
+	result = 'COMMIT' ifFalse: [ (P3Error commitReportedAs: result) signal ]
 ]
 
 { #category : 'accessing' }

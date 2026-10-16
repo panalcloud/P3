@@ -15,11 +15,6 @@ Class {
 	#package : 'P3-Glorp-Tests'
 }
 
-{ #category : 'accessing' }
-P3DatabaseDriverTest >> expectedFailures [
-	^ #( #testCommitTransactionAfterFailureSignals )
-]
-
 { #category : 'private' }
 P3DatabaseDriverTest >> failTransaction [
 	"Put the connection's transaction into the failed state the way ordinary application

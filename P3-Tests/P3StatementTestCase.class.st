@@ -19,6 +19,14 @@ P3StatementTestCase class >> isAbstract [
 ]
 
 { #category : 'helpers' }
+P3StatementTestCase >> assertConnectionAnswersItsOwnQueries [
+	"Two queries in a row: a response left unread shifts the first answer to the second query."
+
+	self assert: (client query: 'SELECT 111') firstFieldOfFirstRecord equals: 111.
+	self assert: (client query: 'SELECT 222') firstFieldOfFirstRecord equals: 222
+]
+
+{ #category : 'helpers' }
 P3StatementTestCase >> boundSqlOf: sqlTemplate with: arguments [
 	"Answer the SQL text that a formatted statement writes for sqlTemplate and arguments."
 

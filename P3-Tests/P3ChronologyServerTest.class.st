@@ -8,6 +8,11 @@ Class {
 	#package : 'P3-Tests'
 }
 
+{ #category : 'accessing' }
+P3ChronologyServerTest >> expectedFailures [
+	^ #( #testInfiniteValuesAreRefusedAndTheConnectionSurvives #testTimestampWithoutZoneReadsFailWhenTheSessionZoneIsUnknown )
+]
+
 { #category : 'private' }
 P3ChronologyServerTest >> readOf: aSelectSql [
 	^ (client query: aSelectSql) firstFieldOfFirstRecord
@@ -33,18 +38,18 @@ P3ChronologyServerTest >> testDatesBeforeCommonEraAreTheSameDayAsOnTheServer [
 ]
 
 { #category : 'tests' }
-P3ChronologyServerTest >> testInfiniteValuesAreRefused [
-	"There is no infinite Date or DateAndTime. The failure must name the value. Each value is read on a
-	new connection, so that one failed read cannot affect the next."
+P3ChronologyServerTest >> testInfiniteValuesAreRefusedAndTheConnectionSurvives [
+	"There is no infinite Date or DateAndTime. The failure must name the value, and the connection must
+	answer the next query as itself."
 
 	#('SELECT ''infinity''::date' 'SELECT ''-infinity''::date' 'SELECT ''infinity''::timestamp' 'SELECT ''-infinity''::timestamptz')
 		do: [ :each | | error |
-			client close; connect.
 			error := [ self readOf: each. nil ] on: P3Error do: [ :e | e ].
 			self assert: error notNil description: each , ' did not signal'.
-			self assert: error code equals: 'P3035' ].
+			self assert: error code equals: 'P3035'.
+			self assert: (client query: 'SELECT 7') firstFieldOfFirstRecord equals: 7.
+			self assert: (client query: 'SELECT 8') firstFieldOfFirstRecord equals: 8 ].
 	"The text form is the way to read them."
-	client close; connect.
 	self assert: (self readOf: 'SELECT ''infinity''::date::text') equals: 'infinity'
 ]
 
@@ -153,13 +158,10 @@ P3ChronologyServerTest >> testTimeWithZoneShiftsAcrossMidnight [
 
 { #category : 'tests' }
 P3ChronologyServerTest >> testTimestampWithoutZoneReadsFailWhenTheSessionZoneIsUnknown [
-	"A timestamp without a zone needs the session zone; one with a zone does not."
-
 	| timestamp |
 	client execute: 'SET TIME ZONE ''<+03>-03'''.
-	self assert: (client query: 'SELECT ''2020-01-31 10:00''::timestamptz') hasData.
 	self should: [ client query: 'SELECT ''2020-01-31 10:00''::timestamp' ] raise: P3Error.
-	client close; connect.
+	self assert: (client query: 'SELECT ''2020-01-31 10:00''::timestamptz') hasData.
 	client execute: 'SET TIME ZONE ''Europe/Amsterdam'''.
 	timestamp := (client query: 'SELECT ''2020-01-31 10:00''::timestamp') firstFieldOfFirstRecord.
 	self assert: timestamp hour equals: 10

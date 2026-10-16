@@ -19,7 +19,8 @@ Class {
 		'unknownTimezoneName',
 		'dateStyle',
 		'intervalStyle',
-		'unknownTypeConverter'
+		'unknownTypeConverter',
+		'jsonPropertyNames'
 	],
 	#classVars : [
 		'HighByteSet'
@@ -346,13 +347,17 @@ P3Converter >> convertIntervalFrom: bytes length: length description: descriptio
 
 { #category : 'converting-special' }
 P3Converter >> convertJsonFrom: bytes length: length description: description [
-	| input |
-	input := ZnLimitedReadStream on: bytes limit: length.
-	input := ZnCharacterReadStream on: input encoding: self encoder. 
-	^ (NeoJSONReader on: input)
-			mapClass: NeoJSONObject;
-			propertyNamesAsSymbols: true;
-			next
+	"Read a json or jsonb value. Its text is decoded first, by #convertStringFrom:length:description:,
+	which consumes exactly the bytes of the value, whitespace around it included. A P3JSONReader then
+	reads that text, keeping the Symbols of property names for the next values."
+
+	| text |
+	text := self convertStringFrom: bytes length: length description: description.
+	^ (P3JSONReader on: text readStream)
+		mapClass: NeoJSONObject;
+		propertyNamesAsSymbols: true;
+		propertyNames: self jsonPropertyNames;
+		next
 ]
 
 { #category : 'converting-geometric' }
@@ -682,6 +687,13 @@ P3Converter >> intervalStyle: aString [
 		refusing: (self usesPostgresIntervalStyle
 			ifTrue: [ nil ]
 			ifFalse: [ [ :bytes :length :description | (P3Error unsupportedIntervalStyle: intervalStyle) signal ] ])
+]
+
+{ #category : 'accessing' }
+P3Converter >> jsonPropertyNames [
+	"The Symbols of the JSON property names I have read, by their String, see P3JSONReader"
+
+	^ jsonPropertyNames ifNil: [ jsonPropertyNames := Dictionary new ]
 ]
 
 { #category : 'accessing' }

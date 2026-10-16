@@ -100,3 +100,27 @@ P3NumericServerTest >> testNonFiniteNumericSignalsP3Error [
 		self assert: error isLocal.
 		self assert: (error messageText includesSubstring: literal) description: error messageText ]
 ]
+
+{ #category : 'tests' }
+P3NumericServerTest >> testNumericIsFollowedByTheNextColumn [
+	| record |
+	record := (client query: 'SELECT 1234.56::numeric(14,2), 7, (-0.5)::numeric, ''x'', 10::numeric, 8') firstRecord.
+	self assert: record equals: { 1234.56s2. 7. -0.5s1. 'x'. 10s0. 8 }.
+	self
+		assert: (record collect: [ :each | (each isNumber and: [ each isInteger not ]) ifTrue: [ each scale ] ifFalse: [ nil ] ])
+		equals: #( 2 nil 1 nil 0 nil )
+]
+
+{ #category : 'tests' }
+P3NumericServerTest >> testNumericsOfEveryLengthAndScale [
+	"n / 10^k for n of 1 to 30 digits, both signs, and k from 0 to 12: the value and the scale are those
+	of the text. The server multiplies by 10^-k, which is exact, where a division is rounded."
+
+	#( 0 1 2 5 12 ) do: [ :k |
+		#( 0 7 42 123456789 123456789012345678 123456789012345678901234567890 ) do: [ :n |
+			#( 1 -1 ) do: [ :sign | | read expected |
+				read := (client query: 'SELECT (' , (sign * n) printString , '::numeric * 10::numeric ^ ' , k negated printString , ')::numeric(60, ' , k printString , ')') firstFieldOfFirstRecord.
+				expected := ScaledDecimal newFromNumber: sign * n / (10 raisedTo: k) scale: k.
+				self assert: read equals: expected.
+				self assert: read scale equals: k ] ] ]
+]

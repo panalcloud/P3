@@ -145,12 +145,10 @@ P3Client >> applicationName: aStringOrNil [
 
 { #category : 'private' }
 P3Client >> asCString: string [
-	| bytes |
-	bytes := ByteArray new: string size + 1.
-	"implicit cheap ASCII conversion"
-	bytes replaceFrom: 1 to: string size with: string startingAt: 1. 
-	"last byte is 0"
-	^ bytes
+	"The bytes of string in UTF-8, ended by a zero byte. The user, database, password and options are
+	sent before the session has an encoding, and UTF-8 is the one that the startup packet asks for."
+
+	^ string utf8Encoded , #[0]
 ]
 
 { #category : 'private' }
@@ -546,13 +544,16 @@ P3Client >> ensureResponseRead [
 
 { #category : 'error handling' }
 P3Client >> errorNoticeInfo: payload [
+	"The fields of an ErrorResponse or NoticeResponse. Their text is in the connection encoding: it
+	quotes user data and may be translated."
+
 	| info fieldType |
 	info := Dictionary new.
 	[ (fieldType := payload next) isZero ] 
 		whileFalse: [ 
 			info 
 				at: fieldType asCharacter 
-				put: (self converter asciiCStringFrom: payload) ].
+				put: (self converter textCStringFrom: payload) ].
 	^ info
 ]
 
@@ -919,12 +920,13 @@ P3Client >> logRetryConnection: remaining [
 { #category : 'private messages' }
 P3Client >> md5PasswordMessage: salt [
 	"concat('md5', md5(concat(md5(concat(password, username)), random-salt))).
-	Keep in mind the md5() function returns its result as a hex string."
+	Keep in mind the md5() function returns its result as a hex string.
+	The password and the user name are hashed as UTF-8, as the server stores them."
 	
 	| credential salted |
 	self password ifNil: [ P3Error passwordRequired signal ].
-	credential := (MD5 hashMessage: self password , self user) hex.
-	salted := (MD5 hashMessage: credential , salt) hex.
+	credential := (MD5 hashMessage: (self password , self user) utf8Encoded) hex.
+	salted := (MD5 hashMessage: credential asByteArray , salt) hex.
 	^ self asCString: 'md5' , salted
 ]
 

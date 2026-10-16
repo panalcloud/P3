@@ -24,11 +24,6 @@ P3EncodingTest >> clientFor: userName password: password database: databaseName 
 	^ other
 ]
 
-{ #category : 'accessing' }
-P3EncodingTest >> expectedFailures [
-	^ #( #testDatabaseNameWithNonAsciiCharactersConnects #testErrorMessageQuotingNonAsciiTextIsReadAsWritten #testMd5PasswordIsHashedAsUtf8 #testNoticeTextWithNonAsciiCharactersIsReadAsWritten #testStartupMessageIsUtf8 #testUserAndPasswordWithNonAsciiCharactersAuthenticate )
-]
-
 { #category : 'tests' }
 P3EncodingTest >> testAsciiConnectionIsUnchanged [
 	self assert: (client query: 'SELECT current_user') firstFieldOfFirstRecord equals: client user.

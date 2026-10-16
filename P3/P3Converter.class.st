@@ -615,6 +615,21 @@ P3Converter >> sessionTimezone [
 	^ timezone ifNil: [ (P3Error unknownTimezone: unknownTimezoneName) signal ]
 ]
 
+{ #category : 'input/output' }
+P3Converter >> textCStringFrom: binaryStream [
+	"Read a zero terminated string in the connection encoding. Text that is not valid in it is read as
+	Latin-1 instead: this is used for error messages, and an error must never be lost because of how
+	it is spelled."
+
+	| bytes |
+	bytes := ByteArray streamContents: [ :out |
+		| byte |
+		[ (byte := binaryStream next) = 0 ] whileFalse: [ out nextPut: byte ] ].
+	^ [ self encoder decodeBytes: bytes ]
+		on: Error
+		do: [ :error | error return: (String streamContents: [ :out | bytes do: [ :each | out nextPut: each asCharacter ] ]) ]
+]
+
 { #category : 'accessing' }
 P3Converter >> timestampClass [
 	^ timestampClass

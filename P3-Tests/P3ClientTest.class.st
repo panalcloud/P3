@@ -498,17 +498,14 @@ P3ClientTest >> testJsonConversion [
 	(client isServerVersionAtLeastMajor: 9 minor: 5) ifFalse: [ ^ self skip ].
 	data := NeoJSONObject new 
 		x: 1; 
-		str: 'les élève Français'; 
+		str: 'les élèves Français'; 
 		foo: 'tab' , Character tab asString; 
 		bar: #(true nil -123); 
 		yourself.
 	result := client query: ('SELECT ''{1}''::json' format: { data printString }).
-	self assert: result firstFieldOfFirstRecord equals: data.
+	self assert: result firstFieldOfFirstRecord asDictionary equals: data asDictionary .
 	result := client query: ('SELECT ''{1}''::jsonb' format: { data printString }).
-	"jsonb stores keys in its own order, so compare without key order"
-	self 
-		assert: (Dictionary newFrom: result firstFieldOfFirstRecord associations)
-		equals: (Dictionary newFrom: data associations)
+	self assert: result firstFieldOfFirstRecord asDictionary equals: data asDictionary 
 ]
 
 { #category : 'tests' }

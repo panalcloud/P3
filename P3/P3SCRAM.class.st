@@ -36,9 +36,9 @@ The computation of the saltedPasssword takes a noticeable amount of time,
 especially with SHA-256 and the conventional 4096 iterations.
 For this reason this computation is cached.
 
-Furthermore, my class side store keeps the saltedPassword for one hour, under a key made of the
+Furthermore, my class side cache keeps the saltedPassword for one hour, under a key made of the
 algorithm, an HMAC of the password under a random secret of the image session, the salt and the
-iterations. An instance holds the nonces and the challenge of one handshake, so use a new instance
+iterations. The cache is thread-safe: a login that finds another one computing the same key waits for it. An instance holds the nonces and the challenge of one handshake, so use a new instance
 for each login. The client nonce comes from the random source of the operating system.
 
 Security note
@@ -73,12 +73,24 @@ Class {
 	],
 	#classVars : [
 		'KeySecret',
-		'Store'
+		'SaltedPasswordCache'
 	],
 	#category : 'P3-Support',
 	#package : 'P3',
 	#tag : 'Support'
 }
+
+{ #category : 'private' }
+P3SCRAM class >> cache [
+	"I maintain a thread-safe TTLCache with salted passwords for 1 hour. A miss computes its value
+	while holding the lock, so concurrent logins with the same key derive it only once."
+
+	^ SaltedPasswordCache ifNil: [
+		SaltedPasswordCache := TTLCache new
+			beThreadSafe;
+			timeToLive: 1 hour;
+			yourself ]
+]
 
 { #category : 'class initialization' }
 P3SCRAM class >> initialize [
@@ -90,7 +102,7 @@ P3SCRAM class >> initialize [
 
 { #category : 'private' }
 P3SCRAM class >> keySecret [
-	"A random secret of this image session, used to key my store without keeping a plain hash of a password."
+	"A random secret of this image session, used to key my cache without keeping a plain hash of a password."
 
 	^ KeySecret ifNil: [ KeySecret := self randomBytes: 32 ]
 ]
@@ -126,9 +138,9 @@ P3SCRAM class >> randomBytes: count [
 
 { #category : 'class initialization' }
 P3SCRAM class >> reset [
-	"Completely throw away my store and the secret of its keys. They contain sensitive information."
+	"Completely throw away my cache and the secret of its keys. They contain sensitive information."
 	
-	Store := nil.
+	SaltedPasswordCache := nil.
 	KeySecret := nil
 ]
 
@@ -137,21 +149,6 @@ P3SCRAM class >> shutDown [
 	"Prevent my store of sensitive information to be saved with an image"
 	
 	self reset
-]
-
-{ #category : 'accessing' }
-P3SCRAM class >> store [
-	"I maintain a store of salted passwords, using a TTLCache of 1 hour"
-
-	^ Store ifNil: [ Store := TTLCache new timeToLive: 1 hour; yourself ]
-]
-
-{ #category : 'accessing' }
-P3SCRAM class >> storeAt: key ifAbsentPut: block [
-	"Instances are no longer shared between logins, each login uses a new one."
-
-	self deprecated: 'Use a new P3SCRAM for each login, only the salted password is cached'.
-	^ block value
 ]
 
 { #category : 'private' }
@@ -278,10 +275,10 @@ P3SCRAM >> salt: byteArray [
 
 { #category : 'private' }
 P3SCRAM >> saltedPassword [
-	"The derivation is slow, so it is cached in my class side store, see #saltedPasswordKey."
+	"The derivation is slow, so it is cached in my class side cache, see #saltedPasswordKey."
 
 	^ saltedPassword ifNil: [
-		saltedPassword := self class store
+		saltedPassword := self class cache
 			at: self saltedPasswordKey
 			ifAbsentPut: [
 				iteratedHash

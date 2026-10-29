@@ -442,7 +442,9 @@ This version changes behaviour that existing code may rely on:
 - `P3DatabaseDriver>>#commitTransaction` raises a P3Error (P3051) when the server rolled back.
 - `typeName` of a description answers a Symbol such as `#oid869` for an unknown type.
 - Deprecated: `P3Converter class>>#typeMap` (use `P3TypeMap standard`),
-  `P3SCRAM class>>#storeAt:ifAbsentPut:`, `P3ConnectionEstablishedEvent>>#password` and `#clearPassword`.
+  `P3ConnectionEstablishedEvent>>#password` and `#clearPassword`.
+- Removed, as upstream did: `P3SCRAM class>>#store` and `#storeAt:ifAbsentPut:`.
+  The salted passwords are in the thread-safe `P3SCRAM class>>#cache`.
 
 ## Logging
 

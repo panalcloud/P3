@@ -15,11 +15,6 @@ Class {
 	#package : 'P3-Tests'
 }
 
-{ #category : 'accessing' }
-P3SCRAMTest >> expectedFailures [
-	^ #( #testCacheIsKeyedByAlgorithm #testCacheIsKeyedByPasswordSaltAndIterations #testCacheMakesAConcurrentMissWait #testSaltedPasswordIsCachedAcrossHandshakes )
-]
-
 { #category : 'helpers' }
 P3SCRAMTest >> handshakeWithPassword: password [
 	^ self handshakeWithPassword: password salt: 'QSXCR+Q6sek8bf92' iterations: 4096

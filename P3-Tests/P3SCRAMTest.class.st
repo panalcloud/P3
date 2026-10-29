@@ -15,10 +15,114 @@ Class {
 	#package : 'P3-Tests'
 }
 
+{ #category : 'helpers' }
+P3SCRAMTest >> handshakeWithPassword: password [
+	^ self handshakeWithPassword: password salt: 'QSXCR+Q6sek8bf92' iterations: 4096
+]
+
+{ #category : 'helpers' }
+P3SCRAMTest >> handshakeWithPassword: password iterations: count [
+	^ self handshakeWithPassword: password salt: 'QSXCR+Q6sek8bf92' iterations: count
+]
+
+{ #category : 'helpers' }
+P3SCRAMTest >> handshakeWithPassword: password salt: base64Salt [
+	^ self handshakeWithPassword: password salt: base64Salt iterations: 4096
+]
+
+{ #category : 'helpers' }
+P3SCRAMTest >> handshakeWithPassword: password salt: base64Salt iterations: count [
+	"Answer a SCRAM exchange that has received the server challenge and has its salted password computed."
+
+	| client handshake |
+	client := P3Client new url: 'psql://user:' , password , '@localhost/db'.
+	handshake := client scramSHA256.
+	handshake serverFirstMessage: 'r=' , handshake clientNounce , 'srv,s=' , base64Salt , ',i=' , count asString.
+	handshake saltedPassword.
+	^ handshake
+]
+
 { #category : 'running' }
 P3SCRAMTest >> setUp [
 	super setUp.
 	scram := P3SCRAM new
+]
+
+{ #category : 'tests' }
+P3SCRAMTest >> testCacheIsKeyedByAlgorithm [
+	"SHA-1 and SHA-256 with the same password, salt and iterations derive different salted passwords."
+
+	| sha1 sha256 |
+	P3SCRAM reset.
+	sha1 := P3SCRAM new sha1; password: 'pencil'; yourself.
+	sha256 := P3SCRAM new sha256; password: 'pencil'; yourself.
+	{ sha1. sha256 } do: [ :each |
+		each serverFirstMessage: 'r=' , each clientNounce , 'srv,s=QSXCR+Q6sek8bf92,i=4096' ].
+	self assert: sha1 saltedPassword size equals: 20.
+	self assert: sha256 saltedPassword size equals: 32.
+	self assert: P3SCRAM cache size equals: 2
+]
+
+{ #category : 'tests' }
+P3SCRAMTest >> testCacheIsKeyedByPasswordSaltAndIterations [
+	| a b c d |
+	P3SCRAM reset.
+	a := self handshakeWithPassword: 'pencil'.
+	b := self handshakeWithPassword: 'pencil2'.
+	c := self handshakeWithPassword: 'pencil' salt: 'W22ZaJ0SNY7soEsUEjb6gQ=='.
+	d := self handshakeWithPassword: 'pencil' iterations: 5000.
+	self assert: P3SCRAM cache size equals: 4.
+	self deny: a saltedPassword equals: b saltedPassword.
+	self deny: a saltedPassword equals: c saltedPassword.
+	self deny: a saltedPassword equals: d saltedPassword
+]
+
+{ #category : 'tests' }
+P3SCRAMTest >> testCacheKeyDoesNotHoldAPlainHashOfThePassword [
+	"A plain SHA-256 of the password in a long lived cache key is a password hash anyone can attack offline."
+
+	| key plain |
+	P3SCRAM reset.
+	key := (self handshakeWithPassword: 'pencil') saltedPasswordKey.
+	plain := (SHA256 hashMessage: 'pencil' utf8Encoded) hex.
+	self deny: (key anySatisfy: [ :each | each = plain ]).
+	P3SCRAM reset.
+	self deny: (self handshakeWithPassword: 'pencil') saltedPasswordKey equals: key
+]
+
+{ #category : 'tests' }
+P3SCRAMTest >> testCacheMakesAConcurrentMissWait [
+	"While one process computes the value of a key, a second process asking for the same key waits for
+	that value instead of computing its own."
+
+	| inside release done first second |
+	P3SCRAM reset.
+	inside := Semaphore new.
+	release := Semaphore new.
+	done := Semaphore new.
+	[
+		[ first := P3SCRAM cache at: #key ifAbsentPut: [ inside signal. release wait. #first ]. done signal ] fork.
+		inside waitTimeoutSeconds: 5.
+		[ second := P3SCRAM cache at: #key ifAbsentPut: [ #second ]. done signal ] fork.
+		(Delay forMilliseconds: 50) wait.
+		release signal.
+		2 timesRepeat: [ done waitTimeoutSeconds: 5 ] ]
+			ensure: [ release signal. P3SCRAM reset ].
+	self assert: first equals: #first.
+	self assert: second equals: #first
+]
+
+{ #category : 'tests' }
+P3SCRAMTest >> testClientNounceIsRandomPrintableText [
+	"The nonce is 24 base64 characters, which never include the comma that separates SCRAM attributes."
+
+	| nonces |
+	nonces := (1 to: 50) collect: [ :each | P3SCRAM new clientNounce ].
+	self assert: nonces asSet size equals: 50.
+	nonces do: [ :each |
+		self assert: each size equals: 24.
+		self deny: (each includes: $,).
+		self assert: (each allSatisfy: [ :char | char isAlphaNumeric or: [ '+/=' includes: char ] ]) ]
 ]
 
 { #category : 'tests' }
@@ -50,6 +154,16 @@ P3SCRAMTest >> testConcurrentAuthenticationRaceCondition [
 	self
 		deny: (final1 includesSubstring: 'sn2')
 		description: 'Client 1 final message must not contain Client 2 server nonce'
+]
+
+{ #category : 'tests' }
+P3SCRAMTest >> testEachHandshakeHasItsOwnStateAndNounce [
+	| client first second |
+	client := P3Client new url: 'psql://user:pencil@localhost/db'.
+	first := client scramSHA256.
+	second := client scramSHA256.
+	self deny: first == second.
+	self deny: first clientNounce equals: second clientNounce
 ]
 
 { #category : 'tests' }
@@ -90,4 +204,16 @@ P3SCRAMTest >> testSHA256 [
 		equals: 'c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ='.
 	scram serverFinalMessage: 'v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4='
 	
+]
+
+{ #category : 'tests' }
+P3SCRAMTest >> testSaltedPasswordIsCachedAcrossHandshakes [
+	| first second |
+	P3SCRAM reset.
+	first := self handshakeWithPassword: 'pencil'.
+	self assert: P3SCRAM cache size equals: 1.
+	second := self handshakeWithPassword: 'pencil'.
+	self assert: P3SCRAM cache size equals: 1.
+	self assert: first saltedPassword equals: second saltedPassword.
+	self deny: first clientNounce equals: second clientNounce
 ]

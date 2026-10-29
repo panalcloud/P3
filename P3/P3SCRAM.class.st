@@ -36,6 +36,11 @@ The computation of the saltedPasssword takes a noticeable amount of time,
 especially with SHA-256 and the conventional 4096 iterations.
 For this reason this computation is cached.
 
+Furthermore, my class side cache keeps the saltedPassword for one hour, under a key made of the
+algorithm, an HMAC of the password under a random secret of the image session, the salt and the
+iterations. The cache is thread-safe: a login that finds another one computing the same key waits for it. An instance holds the nonces and the challenge of one handshake, so use a new instance
+for each login. The client nonce comes from the random source of the operating system.
+
 Security note
 
 The information held in my instances is sensitive.
@@ -67,6 +72,7 @@ Class {
 		'saltedPassword'
 	],
 	#classVars : [
+		'KeySecret',
 		'SaltedPasswordCache'
 	],
 	#category : 'P3-Support',
@@ -76,13 +82,14 @@ Class {
 
 { #category : 'private' }
 P3SCRAM class >> cache [
-	"I maintain a thread-safe TTLCache with salted passwords for 1 hour."
+	"I maintain a thread-safe TTLCache with salted passwords for 1 hour. A miss computes its value
+	while holding the lock, so concurrent logins with the same key derive it only once."
 
 	^ SaltedPasswordCache ifNil: [
-			  SaltedPasswordCache := TTLCache new
-				                         beThreadSafe;
-				                         timeToLive: 1 hour;
-				                         yourself ]
+		SaltedPasswordCache := TTLCache new
+			beThreadSafe;
+			timeToLive: 1 hour;
+			yourself ]
 ]
 
 { #category : 'class initialization' }
@@ -91,6 +98,13 @@ P3SCRAM class >> initialize [
 		at: #SessionManager 
 		ifPresent: [ :manager | manager default registerNetworkClassNamed: self name ]
 		ifAbsent: [ Smalltalk addToShutDownList: self ]
+]
+
+{ #category : 'private' }
+P3SCRAM class >> keySecret [
+	"A random secret of this image session, used to key my cache without keeping a plain hash of a password."
+
+	^ KeySecret ifNil: [ KeySecret := self randomBytes: 32 ]
 ]
 
 { #category : 'private' }
@@ -109,11 +123,25 @@ P3SCRAM class >> parseMessage: string [
 	^ info
 ]
 
+{ #category : 'private' }
+P3SCRAM class >> randomBytes: count [
+	"Answer count bytes from the random source of the operating system. Where there is none, fall back
+	to Random, which is not a cryptographic source."
+
+	| source |
+	source := '/dev/urandom' asFileReference.
+	source exists ifTrue: [ ^ source binaryReadStreamDo: [ :in | in next: count ] ].
+	^ ByteArray new: count streamContents: [ :out | | random |
+		random := Random new.
+		count timesRepeat: [ out nextPut: (random nextInteger: 256) - 1 ] ]
+]
+
 { #category : 'class initialization' }
 P3SCRAM class >> reset [
-	"Completely throw away my cache. It contains sensitive information."
+	"Completely throw away my cache and the secret of its keys. They contain sensitive information."
 	
-	SaltedPasswordCache := nil
+	SaltedPasswordCache := nil.
+	KeySecret := nil
 ]
 
 { #category : 'system startup' }
@@ -179,7 +207,9 @@ P3SCRAM >> clientKey [
 
 { #category : 'accessing' }
 P3SCRAM >> clientNounce [
-	^ clientNounce ifNil: [ clientNounce := UUID new asString36 first: 16 ]
+	"18 random bytes as base64 text: printable, and never holding the comma that separates attributes."
+
+	^ clientNounce ifNil: [ clientNounce := (self class randomBytes: 18) base64Encoded ]
 ]
 
 { #category : 'accessing' }
@@ -245,20 +275,27 @@ P3SCRAM >> salt: byteArray [
 
 { #category : 'private' }
 P3SCRAM >> saltedPassword [
-	"Cached across instances thread-safely by password, salt, and iterations to prevent
-	 race conditions while keeping 0ms subsequent connection performance."
+	"The derivation is slow, so it is cached in my class side cache, see #saltedPasswordKey."
 
 	^ saltedPassword ifNil: [
-			  | cacheKey |
-			  cacheKey := {
-				              self password.
-				              self salt.
-				              self iterations }.
-			  saltedPassword := self class cache at: cacheKey ifAbsentPut: [
-					                    iteratedHash
-						                    password: self password utf8Encoded;
-						                    salt: self salt;
-						                    deriveKey ] ]
+		saltedPassword := self class cache
+			at: self saltedPasswordKey
+			ifAbsentPut: [
+				iteratedHash
+					password: self password utf8Encoded;
+					salt: self salt;
+					deriveKey ] ]
+]
+
+{ #category : 'private' }
+P3SCRAM >> saltedPasswordKey [
+	"The algorithm, the salt, the iterations and an HMAC of the password under the secret of this image
+	session: a different value of any of them never finds an old result, and the key holds no plain hash
+	of the password."
+
+	| passwordMac |
+	passwordMac := (SHA256 new hmac key: self class keySecret; digestMessage: self password utf8Encoded) hex.
+	^ { hash class name. passwordMac. self salt. self iterations }
 ]
 
 { #category : 'public' }

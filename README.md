@@ -269,6 +269,93 @@ trust (no password, no authentication), password, md5 and scram-sha-256 work wit
 Note that for SCRAM-SHA-256 to work, you need to change the password_encryption
 directive in postgresql.conf to scam-sha-256, restart and reenter all user passwords.
 
+### TLS
+
+A URL may give `sslmode=disable` (the default) or `sslmode=require`.
+Any other mode, including `prefer`, `allow`, `verify-ca` and `verify-full`, raises a P3Error,
+so a URL that asks for TLS never ends up connecting in plain text.
+P3 does not yet verify the server certificate.
+
+### Accepted authentication methods
+
+`#requireAuth:` names the authentication methods a client accepts, as libpq's `require_auth`:
+`password` (cleartext), `md5`, `scram-sha-256` and `none`. A URL can give them as
+`require_auth=scram-sha-256,md5`. A request for any other method fails the connect before anything
+is sent. By default every supported method is accepted, except a cleartext password on a connection
+without TLS.
+
+### Timeouts and cancelling
+
+`#connectTimeout:` (default 10 seconds) bounds reaching the server, the TLS handshake,
+authentication and startup. `#timeout:` (default 10 seconds) bounds waiting for the server
+once connected. When a read times out, the statement is cancelled on the server and the
+connection stays usable; the caller gets ConnectionTimedOut, or a P3Error when the statement had
+completed or failed before the cancel arrived. `#statementTimeout:` has the server stop long statements
+itself. `#cancel` stops the running statement from another process. Sockets use TCP keepalive.
+
+For long running work, raise `#timeout:` and bound statements with `#statementTimeout:`.
+
+### Lost connections and transactions
+
+Every request reads its own response, also after an error, a conversion failure or an abandoned read.
+A request is retried on a new connection only when it failed before it was sent.
+
+A connection lost outside a transaction is replaced on the next request and P3ConnectionReplaced
+is signalled: the new server session has none of the SET values or temporary tables of the old one.
+Prepared statements are prepared again, and channels subscribed with `#listen:` are subscribed again
+before P3ConnectionReplaced is signalled. With `#autoReconnect: false`
+the next request raises a P3Error instead and `#connect` continues.
+
+A connection lost inside a transaction is never replaced silently: the server rolled the
+transaction back, so the next request raises a P3Error until `#connect` or `#close`.
+
+## Asynchronous notifications (LISTEN/NOTIFY)
+
+A client can subscribe to channels and receive the NOTIFYs other sessions send on them.
+
+```smalltalk
+listener := P3Client url: 'psql://sven@localhost'.
+listener listen: 'orders'.
+
+"elsewhere"
+(P3Client url: 'psql://sven@localhost') notify: 'orders' payload: '{"id":42}'.
+
+"in the listening process"
+[ (listener waitForNotification: 30)
+	ifNotNil: [ :notification | notification channel. notification payload ] ] repeat.
+```
+
+- `#listen:`, `#unlisten:`, `#unlistenAll` and `#listeningChannels` manage the subscriptions. Channel names
+  are sent as quoted identifiers, so case, spaces and quotes are part of the name. A name must not be empty
+  nor longer than 63 bytes: the server would truncate it on LISTEN while `pg_notify` refuses it. LISTEN and
+  UNLISTEN are refused inside a transaction, because a rollback would undo them.
+- `#notify:payload:` sends one through `pg_notify`, with channel and payload as parameters.
+- Notifications are read whatever the client is doing: between the messages of any response, while
+  starting up, while idle. Each is a P3ChannelNotification (`channel`, `payload`, `processId`, `receivedAt`)
+  queued in arrival order.
+- `#hasNotifications` and `#takeNotifications` do not block. `#waitForNotification:` answers the oldest
+  queued notification, or waits at most the given seconds for one without sending anything, and answers nil
+  on timeout. `#waitForNotifications:` answers all of them. A wait gives other processes the client between
+  slices of at most 100 milliseconds and can be terminated from another process.
+- `#notificationHandler:` takes a one argument block that receives each notification once the response that
+  carried it is read. It may use the client; its errors are logged as P3ErrorOccurredEvent. Each
+  notification is answered once: a wait or `#takeNotifications` that runs first takes it.
+- The queue is bounded by `#notificationLimit:` (default 10000). Beyond it the oldest notifications are
+  dropped and counted by `#droppedNotificationCount`, which a consumer watches to know it must resynchronise.
+
+What PostgreSQL guarantees, as seen through P3: a NOTIFY inside a transaction is delivered at commit, and
+not at all on rollback; identical channel and payload pairs in one transaction are delivered once;
+notifications from different transactions arrive in commit order; a session receives its own
+notifications. A payload must be shorter than 8000 bytes.
+
+A lost connection ends a wait in progress with a P3Error (P3072). The next wait or request opens a new
+session, subscribes to `#listeningChannels` again, announces P3ListenRestoredEvent and signals
+P3ConnectionReplaced. Notifications sent while the connection was down are lost, so a listener resynchronises
+when it sees either. An explicit `#close` forgets the subscriptions.
+
+A listening connection should be dedicated. P3ConnectionPool unsubscribes a released connection that
+listens through `#listen:` or has notifications queued, empties its queue and removes its handler.
+
 ## Glorp
 
 Included is **P3DatabaseDriver**, an interface between Glorp, an advanced object-relational mapper, and P3Client.
@@ -311,6 +398,8 @@ Metacello new
    load: 'glorp'.
 ```
 
+The glorp-tests group adds the tests of P3DatabaseDriver.
+
 ## Unit tests
 
 **P3ClientTest** holds unit tests for the P3 PSQL client.
@@ -326,6 +415,36 @@ The minimal being the following:
 ```smalltalk
 P3ClientTest url: 'psql://sven@localhost'.
 ```
+
+The tests need a server that accepts SCRAM-SHA-256 for the configured user, and a user that may
+create roles and databases (P3EncodingTest creates and drops a role and a database with non ASCII names).
+Several tests end server sessions with pg_terminate_backend. Use a database of their own.
+
+## Changes for existing users
+
+This version changes behaviour that existing code may rely on:
+
+- Values without a text are refused: an arbitrary object bound to a statement raises a P3Error
+  (P3060 for formatted, P3061 for prepared statements) instead of sending its print string, and so does
+  a Fraction in a prepared statement. Characters, UUIDs and Floats (NaN, infinities) are written correctly.
+- `sslmode` other than `disable` or `require` raises a P3Error (P3041).
+- A cleartext password is not sent on a connection without TLS, unless `#requireAuth:` allows it.
+- `infinity` and `-infinity` dates and timestamps raise a P3Error (P3035) instead of reading as year 0.
+- Text that is not exact ISO 8601 raises a P3Error instead of being read partly.
+- The time part of an interval such as `-01:01:01` is negative as a whole.
+- The startup packet sets client_encoding UTF8, DateStyle ISO, IntervalStyle postgres,
+  extra_float_digits 3 and application_name; these override role and database defaults.
+  A later DateStyle or IntervalStyle that P3 cannot read raises a P3Error when such a value is read.
+- A read timeout cancels the statement and keeps the connection, instead of closing it.
+- A connection lost inside a transaction raises a P3Error (P3050) instead of being replaced.
+- `#prepare:` of a query that is already prepared answers that statement instead of failing.
+- `P3FormattedStatement>>#executeBatch:` runs as one transaction when no transaction is open.
+- `P3DatabaseDriver>>#commitTransaction` raises a P3Error (P3051) when the server rolled back.
+- `typeName` of a description answers a Symbol such as `#oid869` for an unknown type.
+- Deprecated: `P3Converter class>>#typeMap` (use `P3TypeMap standard`),
+  `P3ConnectionEstablishedEvent>>#password` and `#clearPassword`.
+- Removed, as upstream did: `P3SCRAM class>>#store` and `#storeAt:ifAbsentPut:`.
+  The salted passwords are in the thread-safe `P3SCRAM class>>#cache`.
 
 ## Logging
 
@@ -374,6 +493,11 @@ Executing the four expressions of the Basic Usage section yields the following o
 2020-09-21 16:39:52 022 [P3] 63801 #Result DROP TABLE, 13 ms
 2020-09-21 16:39:52 023 [P3] 63801 #Close
 ```
+
+Asynchronous notifications add four events: P3ListenEvent (`#Listen`, `#Unlisten`, `#UnlistenAll`),
+P3ListenRestoredEvent (`#ListenRestored`, after a lost connection was replaced), and, only while somebody
+subscribes, P3NotificationReceivedEvent (`#Notification`) and P3NotificationsDroppedEvent
+(`#NotificationsDropped`).
 
 Remember that the information inside the log events can be used to build other applications.
 

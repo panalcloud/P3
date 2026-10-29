@@ -267,6 +267,33 @@ P3ClientTest >> testConnection [
 ]
 
 { #category : 'tests' }
+P3ClientTest >> testConnectionEventCarriesNoSecrets [
+	"The password and the backend secret key, which can cancel any query of the session, stay with the client."
+
+	| other events event |
+	other := P3Client new url: 'psql://someone:s3cret@db.example:5432/db'.
+	(other instVarNamed: 'properties')
+		at: 'backend_secret_key' put: 424242;
+		at: 'backend_process_id' put: 7.
+	events := OrderedCollection new.
+	P3LogEvent announcer
+		when: P3ConnectionEstablishedEvent
+		do: [ :each | events add: each ]
+		for: self.
+	[ other logConnected ] ensure: [ P3LogEvent announcer unsubscribe: self ].
+	self assert: events size equals: 1.
+	event := events first.
+	self deny: (event settings includesKey: #password).
+	self deny: (event properties includesKey: 'backend_secret_key').
+	self assert: event user equals: 'someone'.
+	self assert: event host equals: 'db.example'.
+	self assert: (event properties at: 'backend_process_id') equals: 7.
+	self deny: (event printString includesSubstring: 's3cret').
+	self assert: other password equals: 's3cret'.
+	self assert: ((other instVarNamed: 'properties') at: 'backend_secret_key') equals: 424242
+]
+
+{ #category : 'tests' }
 P3ClientTest >> testConstraints [
 	| statement constraints constraint |
 	client execute: 'DROP TABLE IF EXISTS orders'.
@@ -336,6 +363,22 @@ P3ClientTest >> testCustomCompositeType [
 ]
 
 { #category : 'tests' }
+P3ClientTest >> testDescriptionFieldsAreSigned [
+	"System columns have a negative attribute number, and variable length types a type size of -1."
+
+	| sql fields |
+	sql := 'SELECT tableoid, version() FROM pg_class LIMIT 1'.
+	fields := (client prepare: sql) fieldDescriptions.
+	self assert: fields first attributeNumber equals: -6.
+	self assert: fields first typeSize equals: 4.
+	self assert: fields second typeSize equals: -1.
+	self assert: fields second attributeNumber equals: 0.
+	fields := (client query: sql) descriptions.
+	self assert: fields first attributeNumber equals: -6.
+	self assert: fields second typeSize equals: -1
+]
+
+{ #category : 'tests' }
 P3ClientTest >> testEmptyString [
 	| result |
 	client execute: 'DROP TABLE IF EXISTS table1'.
@@ -353,27 +396,38 @@ P3ClientTest >> testEmptyString [
 P3ClientTest >> testEnum [
 	| result |
 
-	result := client 
-		execute: 'DROP TABLE IF EXISTS table1;';
-		execute: 'DROP TYPE IF EXISTS mood';
-		execute: 'CREATE TYPE mood AS ENUM (''sad'', ''ok'', ''happy'');';
-		execute: 'CREATE TABLE table1 (name text, current_mood mood );';
-		execute: 'INSERT INTO table1 VALUES (''Moe'', ''happy'');'.
+	[ 
+		result := client 
+			execute: 'DROP TABLE IF EXISTS table1;';
+			execute: 'DROP TYPE IF EXISTS mood';
+			execute: 'CREATE TYPE mood AS ENUM (''sad'', ''ok'', ''happy'');';
+			execute: 'CREATE TABLE table1 (name text, current_mood mood );';
+			execute: 'INSERT INTO table1 VALUES (''Moe'', ''happy'');'.
 				
-	result := client loadEnums.
-	
-	self assert: (result includes: #mood).
+		result := client loadEnums.
 		
-	result := client query: 'SELECT * FROM table1 WHERE current_mood = ''happy'';'.
-		
-	self assert: result firstRecord equals: #('Moe' #happy)	
-	
-
+		self assert: (result includes: #mood).
+			
+		result := client query: 'SELECT * FROM table1 WHERE current_mood = ''happy'';'.
+			
+		self assert: result firstRecord equals: #('Moe' #happy) ]
+		ensure: [ 
+			[ client
+				execute: 'DROP TABLE IF EXISTS table1';
+				execute: 'DROP TYPE IF EXISTS mood' ]
+				on: P3Notification
+				do: [ :notification | notification resume ] ]
 ]
 
 { #category : 'tests' }
 P3ClientTest >> testError [
 	self should: [ client query: 'SELECT * FROM abcdef' ] raise: P3Error
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testFirstFieldOfEmptyResultIsNil [
+	self assert: (client query: 'SELECT 1 WHERE false') firstFieldOfFirstRecord isNil.
+	self assert: (client query: 'SELECT 1 WHERE false') firstRecord isNil
 ]
 
 { #category : 'tests' }
@@ -433,7 +487,7 @@ P3ClientTest >> testIntervalConversion [
 	result := client query: 'SELECT INTERVAL ''1 years 1 mons 1 days 1 hours 1 minutes 1 seconds ago'''.
 	self 
 		assert: result firstFieldOfFirstRecord 
-		equals: (P3Interval years: -1 months: -1 days: -1 hours: -1 minutes: 1 seconds: 1).
+		equals: (P3Interval years: -1 months: -1 days: -1 hours: -1 minutes: -1 seconds: -1).
 
 ]
 
@@ -487,6 +541,25 @@ P3ClientTest >> testLineSegmentConversion [
 	self 
 		assert: result firstFieldOfFirstRecord 
 		equals: P3LineSegment yAxisUnit 
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testMessageBufferReleasesTheMemoryOfOneLargeMessage [
+	| buffer small |
+	buffer := P3MessageBuffer new.
+	buffer initializeForSize: 100.
+	small := buffer rawByteBuffer.
+	buffer initializeForSize: 200.
+	self assert: buffer rawByteBuffer == small.
+	buffer initializeForSize: 3 * 1024 * 1024.
+	self assert: buffer capacity >= (3 * 1024 * 1024).
+	self assert: buffer size equals: 3 * 1024 * 1024.
+	buffer initializeForSize: 50.
+	self assert: buffer capacity < P3MessageBuffer retainedCapacity.
+	self assert: buffer size equals: 50.
+	buffer initializeForSize: 2 * 1024 * 1024.
+	buffer initializeForSize: P3MessageBuffer retainedCapacity.
+	self assert: buffer capacity < (2 * 1024 * 1024)
 ]
 
 { #category : 'tests' }
@@ -601,6 +674,52 @@ P3ClientTest >> testQueryCatalog [
 	self assert: result rowCount equals: result numberOfRecords.
 	"each dataRow has two fields"
 	self assert: (result data allSatisfy: [ :each | each size = 2])
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testResultAccessorsAnswerWhenThereIsNoData [
+	| result |
+	result := P3Result descriptions: nil data: nil results: 'SELECT 0'.
+	self assert: result firstRecord isNil.
+	self assert: result firstFieldOfFirstRecord isNil.
+	self assert: result firstColumnData isEmpty.
+	self assert: result recordsAsDictionaries isEmpty
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testRetrySettings [
+	| probe |
+	probe := P3Client new.
+	self assert: probe retryCount equals: 10.
+	self assert: probe retryDelay equals: 5.
+	probe retryCount: 2; retryDelay: 2.
+	self assert: probe retryCount equals: 2.
+	self assert: probe retryDelay equals: 2
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testServerGettersWaitForARunningRequest [
+	| order finished |
+	order := OrderedCollection new.
+	finished := Semaphore new.
+	[ [ client query: 'SELECT pg_sleep(1)'. order add: #request ]
+		ensure: [ finished signal ] ] fork.
+	(Delay forMilliseconds: 300) wait.
+	client serverEncoding.
+	order add: #getter.
+	finished waitTimeoutMilliseconds: 10000.
+	self assert: order asArray equals: #( #request #getter )
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testServerVersionComparisonReadsOddVersionStrings [
+	| properties |
+	properties := client instVarNamed: 'properties'.
+	#( ('18beta1' 18 0 true) ('18beta1' 17 5 true) ('18beta1' 19 0 false) ('18' 18 0 true) ('18' 18 1 false)
+		('beta' 1 0 false) ('16.3' 16 3 true) ('16.3' 16 4 false) ('17.2 (Debian)' 17 2 true) )
+		do: [ :each |
+			properties at: 'server_version' put: each first.
+			self assert: (client isServerVersionAtLeastMajor: (each at: 2) minor: (each at: 3)) equals: (each at: 4) ]
 ]
 
 { #category : 'tests' }
@@ -784,6 +903,34 @@ P3ClientTest >> testTimezoneZTimestamp [
 	client execute: ('SET TIMEZONE TO ''{1}''' format: { originalTimezone }).
 	client converter timezone: (ZTimezone id: originalTimezone).
 	client execute: 'DROP TABLE table1'
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testTotalRowCountWithCommandsWithoutCount [
+	self assert: (client query: 'SELECT 1; CREATE TEMP TABLE p3_no_count_x (i int)') totalRowCount equals: 1.
+	self assert: (client query: 'CREATE TEMP TABLE p3_no_count_y (i int)') totalRowCount equals: 0.
+	self assert: (client query: 'BEGIN; INSERT INTO p3_no_count_y VALUES (1), (2); COMMIT') totalRowCount equals: 2
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testTypeModifierIsSigned [
+	"A column without a type modifier reports -1."
+
+	| descriptions |
+	descriptions := (client prepare: 'SELECT 1::int4 AS n, ''x''::varchar(18) AS v') fieldDescriptions.
+	self assert: descriptions first typeModifier equals: -1.
+	self assert: descriptions second typeModifier equals: 22
+]
+
+{ #category : 'tests' }
+P3ClientTest >> testUnixSocketHostIsADirectoryOrTheSocketFile [
+	| directory |
+	directory := FileLocator temp resolve.
+	client host: directory fullName; port: 5433.
+	self assert: client isUsingUnixSocket.
+	self assert: client unixSocketFile fullName equals: (directory / '.s.PGSQL.5433') fullName.
+	client host: (directory / 'some-socket-file') fullName.
+	self assert: client unixSocketFile fullName equals: (directory / 'some-socket-file') fullName
 ]
 
 { #category : 'tests' }

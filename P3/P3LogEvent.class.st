@@ -37,6 +37,14 @@ P3LogEvent class >> announcer [
 	^ LogEventAnnouncer ifNil: [ LogEventAnnouncer := Announcer new ]
 ]
 
+{ #category : 'accessing' }
+P3LogEvent class >> hasSubscribers [
+	"Is any object subscribed to my announcer? While none is, clients build no events for each query,
+	result and set of bound values."
+
+	^ LogEventAnnouncer notNil and: [ LogEventAnnouncer numberOfSubscriptions > 0 ]
+]
+
 { #category : 'initialization' }
 P3LogEvent class >> initialize [
 	IdCounter := 0.
